@@ -98,7 +98,8 @@ O formato é baseado em **[Keep a Changelog](https://keepachangelog.com/pt-BR/1.
 
 > Referência explícita dos commits que compõem este release, do mais antigo ao mais recente.
 >
-> Horário no fuso **America/Sao_Paulo (UTC-3)**.
+> Data/hora **registrada no commit (Git)** no fuso **America/Sao_Paulo (UTC-3)**.
+> (Obs.: o Git não registra automaticamente a “hora exata” de cada modificação no código — apenas do commit.)
 
 - 12/12/2025 -15:04 `8505c0f`: first commit (base do app: `app/`, `components/`, `hooks/`, `lib/`, `services/`, `supabase/`, configs de deploy).
 - 12/12/2025 -15:51 `fe463d0`: chore: update `@upstash/workflow` para `0.3.0-rc` e `overrides`.
