@@ -17,6 +17,8 @@ export default function CampaignDetailsPage() {
       onPause={controller.onPause}
       onResume={controller.onResume}
       onStart={controller.onStart}
+      onResendSkipped={controller.onResendSkipped}
+      isResendingSkipped={controller.isResendingSkipped}
       isPausing={controller.isPausing}
       isResuming={controller.isResuming}
       isStarting={controller.isStarting}

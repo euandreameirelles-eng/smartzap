@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS campaigns (
   template_name TEXT,
   template_id TEXT,
   template_variables JSONB,
+  template_snapshot JSONB,
+  template_spec_hash TEXT,
+  template_parameter_format TEXT,
+  template_fetched_at TIMESTAMPTZ,
   scheduled_date TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ,
@@ -27,8 +31,26 @@ CREATE TABLE IF NOT EXISTS campaigns (
   sent INTEGER DEFAULT 0,
   delivered INTEGER DEFAULT 0,
   read INTEGER DEFAULT 0,
-  failed INTEGER DEFAULT 0
+  failed INTEGER DEFAULT 0,
+  skipped INTEGER DEFAULT 0
 );
+
+-- Allow adding snapshot columns on existing databases
+ALTER TABLE campaigns
+ADD COLUMN IF NOT EXISTS template_snapshot JSONB;
+
+ALTER TABLE campaigns
+ADD COLUMN IF NOT EXISTS template_spec_hash TEXT;
+
+ALTER TABLE campaigns
+ADD COLUMN IF NOT EXISTS template_parameter_format TEXT;
+
+ALTER TABLE campaigns
+ADD COLUMN IF NOT EXISTS template_fetched_at TIMESTAMPTZ;
+
+-- Backfill Pattern: ensure counters exist on existing databases
+ALTER TABLE campaigns
+ADD COLUMN IF NOT EXISTS skipped INTEGER DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
 CREATE INDEX IF NOT EXISTS idx_campaigns_created_at ON campaigns(created_at DESC);
@@ -68,11 +90,15 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
   custom_fields JSONB DEFAULT '{}'::jsonb,
   status TEXT DEFAULT 'pending',
   message_id TEXT,
+  sending_at TIMESTAMPTZ,
   sent_at TIMESTAMPTZ,
   delivered_at TIMESTAMPTZ,
   read_at TIMESTAMPTZ,
   failed_at TIMESTAMPTZ,
+  skipped_at TIMESTAMPTZ,
   error TEXT,
+  skip_code TEXT,
+  skip_reason TEXT,
   failure_code INTEGER,
   failure_reason TEXT,
   UNIQUE(campaign_id, phone)
@@ -85,8 +111,24 @@ ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'::jsonb;
 ALTER TABLE campaign_contacts
 ADD COLUMN IF NOT EXISTS email TEXT;
 
+ALTER TABLE campaign_contacts
+ADD COLUMN IF NOT EXISTS skipped_at TIMESTAMPTZ;
+
+ALTER TABLE campaign_contacts
+ADD COLUMN IF NOT EXISTS skip_code TEXT;
+
+ALTER TABLE campaign_contacts
+ADD COLUMN IF NOT EXISTS skip_reason TEXT;
+
+ALTER TABLE campaign_contacts
+ADD COLUMN IF NOT EXISTS sending_at TIMESTAMPTZ;
+
 COMMENT ON COLUMN campaign_contacts.email IS 'Snapshot do email do contato no momento da criação da campanha';
 COMMENT ON COLUMN campaign_contacts.custom_fields IS 'Snapshot dos custom_fields do contato no momento da criação da campanha';
+COMMENT ON COLUMN campaign_contacts.skipped_at IS 'Quando o envio foi ignorado pelo pré-check/guard-rail';
+COMMENT ON COLUMN campaign_contacts.skip_code IS 'Código estável do motivo de skip (ex.: MISSING_REQUIRED_PARAM)';
+COMMENT ON COLUMN campaign_contacts.skip_reason IS 'Motivo legível do skip (para UI e auditoria)';
+COMMENT ON COLUMN campaign_contacts.sending_at IS 'Quando o contato foi "claimado" para envio (idempotência/at-least-once)';
 
 CREATE INDEX IF NOT EXISTS idx_campaign_contacts_campaign ON campaign_contacts(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_contacts_status ON campaign_contacts(status);
@@ -102,10 +144,22 @@ CREATE TABLE IF NOT EXISTS templates (
   category TEXT,
   language TEXT DEFAULT 'pt_BR',
   status TEXT,
+  parameter_format TEXT DEFAULT 'positional',
   components JSONB,
+  spec_hash TEXT,
+  fetched_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ
 );
+
+ALTER TABLE templates
+ADD COLUMN IF NOT EXISTS parameter_format TEXT DEFAULT 'positional';
+
+ALTER TABLE templates
+ADD COLUMN IF NOT EXISTS spec_hash TEXT;
+
+ALTER TABLE templates
+ADD COLUMN IF NOT EXISTS fetched_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_templates_name ON templates(name);
 CREATE INDEX IF NOT EXISTS idx_templates_status ON templates(status);

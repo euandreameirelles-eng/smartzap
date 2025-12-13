@@ -35,13 +35,15 @@ export async function GET(request: Request, { params }: Params) {
       { count: sent },
       { count: delivered },
       { count: read },
+      { count: skipped },
       { count: failed }
     ] = await Promise.all([
       supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).eq('campaign_id', id),
-      supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).eq('campaign_id', id).eq('status', 'pending'),
+      supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).eq('campaign_id', id).in('status', ['pending', 'sending']),
       supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).eq('campaign_id', id).eq('status', 'sent'),
       supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).eq('campaign_id', id).eq('status', 'delivered'),
       supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).eq('campaign_id', id).eq('status', 'read'),
+      supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).eq('campaign_id', id).eq('status', 'skipped'),
       supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).eq('campaign_id', id).eq('status', 'failed')
     ])
 
@@ -51,6 +53,7 @@ export async function GET(request: Request, { params }: Params) {
       sent: sent || 0,
       delivered: delivered || 0,
       read: read || 0,
+      skipped: skipped || 0,
       failed: failed || 0,
     }
 
@@ -62,13 +65,15 @@ export async function GET(request: Request, { params }: Params) {
 
     if (statusFilter) {
       if (statusFilter === MessageStatus.SENT) {
-        // Sent matches everything that is not pending (Sent + Delivered + Read + Failed)
-        query = query.neq('status', 'pending')
+        // "Enviado" = efetivamente disparado (exclui pending e skipped)
+        query = query.in('status', ['sent', 'delivered', 'read', 'failed'])
       } else if (statusFilter === MessageStatus.DELIVERED) {
         // Delivered matches Delivered + Read
         query = query.in('status', ['delivered', 'read'])
       } else if (statusFilter === MessageStatus.READ) {
         query = query.eq('status', 'read')
+      } else if (statusFilter === MessageStatus.SKIPPED) {
+        query = query.eq('status', 'skipped')
       } else if (statusFilter === MessageStatus.FAILED) {
         query = query.eq('status', 'failed')
       }
@@ -90,6 +95,8 @@ export async function GET(request: Request, { params }: Params) {
       if (dbStatus === 'sent') status = MessageStatus.SENT
       else if (dbStatus === 'delivered') status = MessageStatus.DELIVERED
       else if (dbStatus === 'read') status = MessageStatus.READ
+      else if (dbStatus === 'sending') status = MessageStatus.PENDING
+      else if (dbStatus === 'skipped') status = MessageStatus.SKIPPED
       else if (dbStatus === 'failed') status = MessageStatus.FAILED
 
       return {
@@ -103,6 +110,8 @@ export async function GET(request: Request, { params }: Params) {
         deliveredAt: row.delivered_at ? new Date(row.delivered_at as string).toLocaleString('pt-BR') : undefined,
         readAt: row.read_at ? new Date(row.read_at as string).toLocaleString('pt-BR') : undefined,
         error: (
+          // Para skipped, o motivo vem do nosso pré-check/guard-rail
+          (status === MessageStatus.SKIPPED ? (row.skip_reason || row.skip_code) : undefined) ||
           row.failure_reason ||
           row.error ||
           row.error_message ||

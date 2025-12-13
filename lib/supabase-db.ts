@@ -42,10 +42,15 @@ export const campaignDb = {
             status: row.status as CampaignStatus,
             templateName: row.template_name,
             templateVariables: row.template_variables as { header: string[], body: string[], buttons?: Record<string, string> } | undefined,
+            templateSnapshot: (row as any).template_snapshot ?? undefined,
+            templateSpecHash: (row as any).template_spec_hash ?? null,
+            templateParameterFormat: (row as any).template_parameter_format ?? null,
+            templateFetchedAt: (row as any).template_fetched_at ?? null,
             recipients: row.total_recipients,
             sent: row.sent,
             delivered: row.delivered,
             read: row.read,
+            skipped: (row as any).skipped || 0,
             failed: row.failed,
             createdAt: row.created_at,
             scheduledAt: row.scheduled_date,
@@ -69,10 +74,15 @@ export const campaignDb = {
             status: data.status as CampaignStatus,
             templateName: data.template_name,
             templateVariables: data.template_variables as { header: string[], body: string[], buttons?: Record<string, string> } | undefined,
+            templateSnapshot: (data as any).template_snapshot ?? undefined,
+            templateSpecHash: (data as any).template_spec_hash ?? null,
+            templateParameterFormat: (data as any).template_parameter_format ?? null,
+            templateFetchedAt: (data as any).template_fetched_at ?? null,
             recipients: data.total_recipients,
             sent: data.sent,
             delivered: data.delivered,
             read: data.read,
+            skipped: (data as any).skipped || 0,
             failed: data.failed,
             createdAt: data.created_at,
             scheduledAt: data.scheduled_date,
@@ -105,6 +115,7 @@ export const campaignDb = {
                 delivered: 0,
                 read: 0,
                 failed: 0,
+                skipped: 0,
                 created_at: now,
                 scheduled_date: campaign.scheduledAt,
                 started_at: campaign.scheduledAt ? null : now,
@@ -124,6 +135,7 @@ export const campaignDb = {
             sent: 0,
             delivered: 0,
             read: 0,
+            skipped: 0,
             failed: 0,
             createdAt: now,
             scheduledAt: campaign.scheduledAt,
@@ -159,6 +171,7 @@ export const campaignDb = {
                 sent: 0,
                 delivered: 0,
                 read: 0,
+                skipped: 0,
                 failed: 0,
                 created_at: now,
             })
@@ -195,9 +208,14 @@ export const campaignDb = {
         if (updates.sent !== undefined) updateData.sent = updates.sent
         if (updates.delivered !== undefined) updateData.delivered = updates.delivered
         if (updates.read !== undefined) updateData.read = updates.read
+        if (updates.skipped !== undefined) updateData.skipped = updates.skipped
         if (updates.failed !== undefined) updateData.failed = updates.failed
         if (updates.completedAt !== undefined) updateData.completed_at = updates.completedAt
         if (updates.startedAt !== undefined) updateData.started_at = updates.startedAt
+        if (updates.templateSnapshot !== undefined) updateData.template_snapshot = updates.templateSnapshot
+        if (updates.templateSpecHash !== undefined) updateData.template_spec_hash = updates.templateSpecHash
+        if (updates.templateParameterFormat !== undefined) updateData.template_parameter_format = updates.templateParameterFormat
+        if (updates.templateFetchedAt !== undefined) updateData.template_fetched_at = updates.templateFetchedAt
 
         updateData.updated_at = new Date().toISOString()
 
@@ -551,6 +569,9 @@ export const templateDb = {
             category: (row.category as TemplateCategory) || 'MARKETING',
             language: row.language,
             status: (row.status as TemplateStatus) || 'PENDING',
+            parameterFormat: ((row as any).parameter_format as any) || undefined,
+            specHash: (row as any).spec_hash ?? null,
+            fetchedAt: (row as any).fetched_at ?? null,
             content: row.components,
             preview: '',
             lastUpdated: row.updated_at || row.created_at,
@@ -572,6 +593,9 @@ export const templateDb = {
             category: (data.category as TemplateCategory) || 'MARKETING',
             language: data.language,
             status: (data.status as TemplateStatus) || 'PENDING',
+            parameterFormat: ((data as any).parameter_format as any) || undefined,
+            specHash: (data as any).spec_hash ?? null,
+            fetchedAt: (data as any).fetched_at ?? null,
             content: data.components,
             preview: '',
             lastUpdated: data.updated_at || data.created_at,
@@ -589,9 +613,12 @@ export const templateDb = {
                 category: template.category,
                 language: template.language,
                 status: template.status,
+                parameter_format: (template as any).parameterFormat || 'positional',
                 components: typeof template.content === 'string'
                     ? JSON.parse(template.content)
                     : template.content,
+                spec_hash: (template as any).specHash ?? null,
+                fetched_at: (template as any).fetchedAt ?? null,
                 created_at: now,
                 updated_at: now,
             }, { onConflict: 'name' })

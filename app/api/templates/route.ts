@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getWhatsAppCredentials } from '@/lib/whatsapp-credentials'
 import { templateDb } from '@/lib/supabase-db'
+import { createHash } from 'crypto'
 
 interface MetaTemplateComponent {
   type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS'
@@ -14,6 +15,7 @@ interface MetaTemplate {
   status: string
   language: string
   category: string
+  parameter_format?: 'positional' | 'named'
   components: MetaTemplateComponent[]
   last_updated_time: string
 }
@@ -21,7 +23,7 @@ interface MetaTemplate {
 // Helper to fetch ALL templates from Meta API (with pagination)
 async function fetchTemplatesFromMeta(businessAccountId: string, accessToken: string) {
   const allTemplates: MetaTemplate[] = []
-  let nextUrl: string | null = `https://graph.facebook.com/v24.0/${businessAccountId}/message_templates?fields=name,status,language,category,components,last_updated_time&limit=100`
+  let nextUrl: string | null = `https://graph.facebook.com/v24.0/${businessAccountId}/message_templates?fields=name,status,language,category,parameter_format,components,last_updated_time&limit=100`
 
   // Paginate through all results
   while (nextUrl) {
@@ -44,12 +46,25 @@ async function fetchTemplatesFromMeta(businessAccountId: string, accessToken: st
   // Transform Meta format to our App format
   return allTemplates.map((t: MetaTemplate) => {
     const bodyComponent = t.components.find((c: MetaTemplateComponent) => c.type === 'BODY')
+    const specHash = createHash('sha256')
+      .update(JSON.stringify({
+        name: t.name,
+        language: t.language,
+        category: t.category,
+        parameter_format: t.parameter_format || 'positional',
+        components: t.components,
+      }))
+      .digest('hex')
+
     return {
       id: t.name,
       name: t.name,
       category: t.category,
       language: t.language,
       status: t.status,
+      parameterFormat: t.parameter_format || 'positional',
+      specHash,
+      fetchedAt: new Date().toISOString(),
       content: bodyComponent?.text || 'No content',
       preview: bodyComponent?.text || '',
       lastUpdated: t.last_updated_time,
@@ -64,39 +79,44 @@ async function syncTemplatesToLocalDb(templates: ReturnType<typeof fetchTemplate
   try {
     const now = new Date().toISOString()
 
-    // Prepare all templates for batch upsert
-    const rows = templates.map(template => ({
-      id: template.id,
+    const rows = templates.map((template) => ({
       name: template.name,
-      category: template.category,
       language: template.language,
-      status: template.status,
+      category: template.category,
       components: template.components,
-      created_at: now,
-      updated_at: now,
+      status: template.status,
+      parameter_format: (template as any).parameterFormat || 'positional',
+      spec_hash: (template as any).specHash || null,
+      fetched_at: (template as any).fetchedAt || now,
     }))
 
-    // Batch upsert - much faster than sequential inserts
-    const { createClient } = await import('@supabase/supabase-js')
-    const supabaseKey = process.env.SUPABASE_SECRET_KEY
-    if (!supabaseKey) {
-      throw new Error('Missing Supabase admin key (SUPABASE_SECRET_KEY)')
+    // Ambientes antigos podem não ter as colunas parameter_format/spec_hash/fetched_at ainda.
+    try {
+      await templateDb.upsert(rows)
+    } catch (error: any) {
+      const message = String(error?.message || error)
+      const missingColumn =
+        message.includes('column') &&
+        (message.includes('parameter_format') || message.includes('spec_hash') || message.includes('fetched_at'))
+
+      if (!missingColumn) throw error
+
+      console.warn('[Templates] Falha ao salvar colunas novas (schema antigo). Fazendo fallback para payload legado.')
+      await templateDb.upsert(
+        rows.map(({ name, language, category, components, status }) => ({
+          name,
+          language,
+          category,
+          components,
+          status,
+        }))
+      )
     }
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      supabaseKey
-    )
 
-    const { error } = await supabase
-      .from('templates')
-      .upsert(rows, { onConflict: 'name' })
-
-    if (error) throw error
-
-    console.log(`[Templates] ✅ Batch synced ${templates.length} templates to local DB`)
+    console.log(`[Templates] ✅ Synced ${templates.length} templates to local database`)
   } catch (error) {
     // Log but don't fail the request - sync is best-effort
-    console.error('[Templates] Failed to sync templates to local DB:', error)
+    console.error('[Templates] Failed to sync templates to local database:', error)
   }
 }
 

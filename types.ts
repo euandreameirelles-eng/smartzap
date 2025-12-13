@@ -24,6 +24,7 @@ export enum MessageStatus {
   SENT = 'Enviado',
   DELIVERED = 'Entregue',
   READ = 'Lido',
+  SKIPPED = 'Ignorado',
   FAILED = 'Falhou'
 }
 
@@ -39,6 +40,9 @@ export interface Template {
   content: string;
   preview: string;
   lastUpdated: string;
+  parameterFormat?: 'positional' | 'named';
+  specHash?: string | null;
+  fetchedAt?: string | null;
   components?: TemplateComponent[]; // Full components from Meta API
 }
 
@@ -68,10 +72,16 @@ export interface Campaign {
   sent: number;
   delivered: number;
   read: number;
+  skipped: number;
   failed: number;
   createdAt: string;
   templateName: string;
   templateVariables?: { header: string[], body: string[], buttons?: Record<string, string> };  // Meta API structure: arrays por componente
+  // Template snapshot (fonte operacional por campanha)
+  templateSnapshot?: any;
+  templateSpecHash?: string | null;
+  templateParameterFormat?: 'positional' | 'named' | null;
+  templateFetchedAt?: string | null;
   // Scheduling
   scheduledAt?: string;  // ISO timestamp for scheduled campaigns
   startedAt?: string;    // When campaign actually started sending

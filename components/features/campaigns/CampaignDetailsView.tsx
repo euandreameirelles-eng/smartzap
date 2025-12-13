@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { PrefetchLink } from '@/components/ui/PrefetchLink';
-import { ChevronLeft, Clock, CheckCircle2, Eye, AlertCircle, Download, Search, Filter, RefreshCw, Pause, Play, Calendar, Loader2, X, FileText } from 'lucide-react';
+import { ChevronLeft, Clock, CheckCircle2, Eye, AlertCircle, Download, Search, Filter, RefreshCw, Pause, Play, Calendar, Loader2, X, FileText, Ban } from 'lucide-react';
 import { Campaign, CampaignStatus, Message, MessageStatus, Template } from '../../../types';
 import { TemplatePreviewRenderer } from '../templates/TemplatePreviewRenderer';
 import { templateService } from '../../../services';
@@ -40,6 +40,7 @@ const MessageStatusBadge = ({ status }: { status: MessageStatus }) => {
     [MessageStatus.READ]: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
     [MessageStatus.DELIVERED]: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
     [MessageStatus.SENT]: 'text-gray-400 bg-gray-500/10 border-gray-500/20',
+    [MessageStatus.SKIPPED]: 'text-amber-300 bg-amber-500/10 border-amber-500/20',
     [MessageStatus.FAILED]: 'text-red-400 bg-red-500/10 border-red-500/20',
     // Fallback para valores antigos em inglês
     'Pending': 'text-amber-400 bg-amber-500/10 border-amber-500/20',
@@ -54,6 +55,7 @@ const MessageStatusBadge = ({ status }: { status: MessageStatus }) => {
     [MessageStatus.READ]: <Eye size={12} className="mr-1" />,
     [MessageStatus.DELIVERED]: <CheckCircle2 size={12} className="mr-1" />,
     [MessageStatus.SENT]: <Clock size={12} className="mr-1" />,
+    [MessageStatus.SKIPPED]: <Ban size={12} className="mr-1" />,
     [MessageStatus.FAILED]: <AlertCircle size={12} className="mr-1" />,
     // Fallback para valores antigos em inglês
     'Pending': <Loader2 size={12} className="mr-1 animate-spin" />,
@@ -69,6 +71,7 @@ const MessageStatusBadge = ({ status }: { status: MessageStatus }) => {
     [MessageStatus.READ]: 'Lido',
     [MessageStatus.DELIVERED]: 'Entregue',
     [MessageStatus.SENT]: 'Enviado',
+    [MessageStatus.SKIPPED]: 'Ignorado',
     [MessageStatus.FAILED]: 'Falhou',
     // Fallback para valores antigos em inglês
     'Pending': 'Pendente',
@@ -160,9 +163,11 @@ interface CampaignDetailsViewProps {
   onPause?: () => void;
   onResume?: () => void;
   onStart?: () => void;
+  onResendSkipped?: () => void;
   isPausing?: boolean;
   isResuming?: boolean;
   isStarting?: boolean;
+  isResendingSkipped?: boolean;
   canPause?: boolean;
   canResume?: boolean;
   canStart?: boolean;
@@ -185,9 +190,11 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
   onPause,
   onResume,
   onStart,
+  onResendSkipped,
   isPausing,
   isResuming,
   isStarting,
+  isResendingSkipped,
   canPause,
   canResume,
   canStart,
@@ -306,6 +313,19 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
             </button>
           )}
 
+          {/* Resend skipped */}
+          {!!(campaign.skipped ?? 0) && (campaign.skipped ?? 0) > 0 && (
+            <button
+              onClick={onResendSkipped}
+              disabled={!onResendSkipped || !!isResendingSkipped}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-500 border border-amber-500/20 rounded-lg text-white transition-colors flex items-center gap-2 text-sm font-medium disabled:opacity-50"
+              title="Revalida contatos ignorados e reenfileira apenas os válidos"
+            >
+              {isResendingSkipped ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}
+              {isResendingSkipped ? 'Reenviando...' : `Reenviar ignorados (${campaign.skipped ?? 0})`}
+            </button>
+          )}
+
           <button className="px-4 py-2 bg-zinc-900 border border-white/10 rounded-lg text-gray-300 hover:text-white hover:bg-white/5 transition-colors flex items-center gap-2 text-sm font-medium">
             <Download size={16} /> Relatório CSV
           </button>
@@ -313,7 +333,7 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <DetailCard
           title="Enviadas"
           value={(campaign.sent ?? 0).toLocaleString()}
@@ -340,6 +360,15 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
           color="#3b82f6"
           isActive={filterStatus === MessageStatus.READ}
           onClick={() => setFilterStatus?.(filterStatus === MessageStatus.READ ? null : MessageStatus.READ)}
+        />
+        <DetailCard
+          title="Ignoradas"
+          value={(campaign.skipped ?? 0).toLocaleString()}
+          subvalue="Variáveis/telefones inválidos (pré-check)"
+          icon={Ban}
+          color="#f59e0b"
+          isActive={filterStatus === MessageStatus.SKIPPED}
+          onClick={() => setFilterStatus?.(filterStatus === MessageStatus.SKIPPED ? null : MessageStatus.SKIPPED)}
         />
         <DetailCard
           title="Falhas"
@@ -401,7 +430,16 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
                   <td className="px-6 py-3 text-gray-500 text-xs">{msg.sentAt}</td>
                   <td className="px-6 py-3">
                     {msg.error ? (
-                      <span className="text-red-400 text-xs flex items-center gap-1"><AlertCircle size={10} /> {msg.error}</span>
+                      <span
+                        className={`text-xs flex items-center gap-1 ${
+                          msg.status === MessageStatus.SKIPPED
+                            ? 'text-amber-300'
+                            : 'text-red-400'
+                        }`}
+                      >
+                        {msg.status === MessageStatus.SKIPPED ? <Ban size={10} /> : <AlertCircle size={10} />}
+                        {msg.error}
+                      </span>
                     ) : (
                       <span className="text-gray-600 text-xs">-</span>
                     )}

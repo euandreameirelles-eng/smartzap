@@ -65,8 +65,8 @@ export const useRealtimeStatus = (
     // NEVER poll draft campaigns
     if (campaign.status === CampaignStatus.DRAFT) return false;
     
-    // Check if all messages have been processed (sent + failed >= recipients)
-    const totalProcessed = (campaign.sent || 0) + (campaign.failed || 0);
+    // Check if all messages have been processed (sent + failed + skipped >= recipients)
+    const totalProcessed = (campaign.sent || 0) + (campaign.failed || 0) + (campaign.skipped || 0);
     const isComplete = totalProcessed >= (campaign.recipients || 0);
     
     // If all processed, don't poll (even if status hasn't updated yet)

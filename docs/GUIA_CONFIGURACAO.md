@@ -108,6 +108,75 @@ Se você quer **rodar e testar no seu computador** (sem Vercel), o fluxo é bem 
 
     > Se as tabelas não existirem, o app até abre, mas rotas que dependem do banco vão falhar.
 
+### 🧱 Aplicando/atualizando o schema no Supabase (produção e local)
+
+Se o seu projeto já estava rodando com um schema mais antigo, você precisa **atualizar** o banco para suportar:
+
+- **Ignorados (`skipped`)** com motivo (`skip_code`, `skip_reason`)
+- **Idempotência** do workflow (`status='sending'` + `sending_at`) para evitar double-send em retries
+- **Snapshot do template por campanha** (anti-drift e auditoria)
+
+✅ A boa notícia: o arquivo consolidado já está preparado com `IF NOT EXISTS`, então é **seguro** rodar de novo.
+
+#### Passo a passo (Supabase Dashboard)
+
+1. Abra o **Supabase Dashboard → SQL Editor**
+2. Clique em **New query**
+3. Cole **todo o conteúdo** do arquivo `lib/migrations/0001_initial_schema.sql`
+4. Clique em **Run**
+
+> Dica: se você já tem tabelas com dados, isso não apaga nada — o script usa `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+
+#### Verificação rápida (cole no SQL Editor e rode)
+
+Depois de executar a migration, rode estas queries para confirmar que o schema está pronto:
+
+1) **Colunas de idempotência e skipped em `campaign_contacts`**
+
+```sql
+select column_name, data_type
+from information_schema.columns
+where table_schema = 'public'
+    and table_name = 'campaign_contacts'
+    and column_name in (
+        'status',
+        'skipped_at',
+        'skip_code',
+        'skip_reason',
+        'sending_at'
+    )
+order by column_name;
+```
+
+2) **Colunas de snapshot em `campaigns`**
+
+```sql
+select column_name, data_type
+from information_schema.columns
+where table_schema = 'public'
+    and table_name = 'campaigns'
+    and column_name in (
+        'template_snapshot',
+        'template_spec_hash',
+        'template_parameter_format',
+        'template_fetched_at'
+    )
+order by column_name;
+```
+
+3) **`templates` com cache de spec**
+
+```sql
+select column_name, data_type
+from information_schema.columns
+where table_schema = 'public'
+    and table_name = 'templates'
+    and column_name in ('parameter_format', 'spec_hash', 'fetched_at')
+order by column_name;
+```
+
+Se todas as colunas aparecerem, o banco está pronto.
+
 5. **Suba o projeto**:
     - `npm run dev`
     - Abra `http://localhost:3000`
@@ -150,6 +219,10 @@ isso significa que as tabelas foram criadas, mas **os GRANTs não foram aplicado
 ✅ Solução rápida (Supabase Dashboard → **SQL Editor**): execute os GRANTs do arquivo:
 
 - `lib/migrations/0001_initial_schema.sql` (no final do arquivo existe a seção **PERMISSIONS**)
+
+> ✅ Recomendação: em produção, trate permissões com carinho.
+> O SmartZap usa `SUPABASE_SECRET_KEY` no backend (service_role) para operações administrativas.
+> Se você abrir demais para `anon/authenticated`, faça isso conscientemente (ou implemente RLS/policies).
 
 Depois disso, recarregue o app.
 

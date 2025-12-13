@@ -3,8 +3,10 @@ import { campaignDb, templateDb } from '@/lib/supabase-db'
 import { supabase } from '@/lib/supabase'
 import { CampaignStatus } from '@/types'
 import { getUserFriendlyMessage } from '@/lib/whatsapp-errors'
+import { buildMetaTemplatePayload, precheckContactForTemplate } from '@/lib/whatsapp/template-contract'
 
 interface Contact {
+  contactId?: string
   phone: string
   name: string
   custom_fields?: Record<string, unknown>
@@ -16,8 +18,34 @@ interface CampaignWorkflowInput {
   templateName: string
   contacts: Contact[]
   templateVariables?: { header: string[], body: string[], buttons?: Record<string, string> }  // Meta API structure
+  templateSnapshot?: {
+    name: string
+    language?: string
+    parameter_format?: 'positional' | 'named'
+    spec_hash?: string | null
+    fetched_at?: string | null
+    components?: any
+  }
   phoneNumberId: string
   accessToken: string
+  isResend?: boolean
+}
+
+async function claimPendingForSend(campaignId: string, phone: string): Promise<boolean> {
+  const now = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('campaign_contacts')
+    .update({ status: 'sending', sending_at: now })
+    .eq('campaign_id', campaignId)
+    .eq('phone', phone)
+    .eq('status', 'pending')
+    .select('id')
+
+  if (error) {
+    console.warn(`[Workflow] Falha ao claimar contato ${phone} (seguindo sem enviar):`, error)
+    return false
+  }
+  return Array.isArray(data) && data.length > 0
 }
 
 /**
@@ -38,16 +66,43 @@ function buildBodyParameters(contactName: string, templateVariables: string[] = 
 }
 
 // Atualiza status do contato no banco (Supabase)
-async function updateContactStatus(campaignId: string, phone: string, status: 'sent' | 'failed', messageId?: string, error?: string) {
+async function updateContactStatus(
+  campaignId: string,
+  phone: string,
+  status: 'sent' | 'failed' | 'skipped',
+  opts?: { messageId?: string; error?: string; skipCode?: string; skipReason?: string }
+) {
   try {
+    const now = new Date().toISOString()
+    const update: any = {
+      status,
+    }
+
+    if (status === 'sent') {
+      update.sent_at = now
+      update.message_id = opts?.messageId || null
+      update.error = null
+      update.skip_code = null
+      update.skip_reason = null
+      update.skipped_at = null
+    }
+
+    if (status === 'failed') {
+      update.failed_at = now
+      update.error = opts?.error || null
+    }
+
+    if (status === 'skipped') {
+      update.skipped_at = now
+      update.skip_code = opts?.skipCode || null
+      update.skip_reason = opts?.skipReason || opts?.error || null
+      update.error = null
+      update.message_id = null
+    }
+
     await supabase
       .from('campaign_contacts')
-      .update({
-        status,
-        sent_at: new Date().toISOString(),
-        message_id: messageId || null,
-        error: error || null
-      })
+      .update(update)
       .eq('campaign_id', campaignId)
       .eq('phone', phone)
   } catch (e) {
@@ -59,13 +114,18 @@ async function updateContactStatus(campaignId: string, phone: string, status: 's
 // Each step is a separate HTTP request, bypasses Vercel 10s timeout
 export const { POST } = serve<CampaignWorkflowInput>(
   async (context) => {
-    const { campaignId, templateName, contacts, templateVariables, phoneNumberId, accessToken } = context.requestPayload
+    const { campaignId, templateName, contacts, templateVariables, phoneNumberId, accessToken, templateSnapshot } = context.requestPayload
 
     // Step 1: Mark campaign as SENDING in Supabase
     await context.run('init-campaign', async () => {
+      const nowIso = new Date().toISOString()
+      const existing = await campaignDb.getById(campaignId)
+      const startedAt = (existing as any)?.startedAt || nowIso
+
       await campaignDb.updateStatus(campaignId, {
         status: CampaignStatus.SENDING,
-        startedAt: new Date().toISOString()
+        startedAt,
+        completedAt: null,
       })
 
       console.log(`📊 Campaign ${campaignId} started with ${contacts.length} contacts`)
@@ -87,6 +147,10 @@ export const { POST } = serve<CampaignWorkflowInput>(
       await context.run(`send-batch-${batchIndex}`, async () => {
         let sentCount = 0
         let failedCount = 0
+        let skippedCount = 0
+
+        const template: any = templateSnapshot || (await templateDb.getByName(templateName))
+        if (!template) throw new Error(`Template ${templateName} não encontrado no banco local. Sincronize Templates.`)
 
         for (const contact of batch) {
           try {
@@ -102,187 +166,63 @@ export const { POST } = serve<CampaignWorkflowInput>(
               break
             }
 
-            // Send message via WhatsApp Cloud API
-            // Fetch Template Definition (Smart Parsing)
-            const template = await templateDb.getByName(templateName)
-            if (!template) {
-              console.warn(`[Workflow] Template ${templateName} not found in DB. Using legacy parsing.`)
+            // Idempotência (at-least-once): se já foi processado, não reenviar
+            const { data: existingRow } = await supabase
+              .from('campaign_contacts')
+              .select('status, message_id')
+              .eq('campaign_id', campaignId)
+              .eq('phone', contact.phone)
+              .single()
+
+            const existingStatus = (existingRow as any)?.status as string | undefined
+            if (existingStatus && ['sent', 'delivered', 'read', 'failed', 'skipped'].includes(existingStatus)) {
+              console.log(`↩️ Idempotência: ${contact.phone} já está em status=${existingStatus}, pulando.`)
+              continue
+            }
+            if (existingStatus === 'sending') {
+              console.log(`↩️ Idempotência: ${contact.phone} já está em status=sending (em progresso), pulando.`)
+              continue
             }
 
-            const headerVars: string[] = []
-            const bodyVars: string[] = []
-            const buttonVars: string[] = []
-
-            // Helper to resolve value (handles dynamic tokens like {{nome}}, {{telefone}}, {{email}}, and custom fields)
-            // Supports both Portuguese (primary) and English (backward compat) formats
-            const resolveValue = (key: string, explicitValue: string | undefined) => {
-              let val = explicitValue || '';
-
-              // Token replacement - Portuguese is primary, English for backward compat
-              // {{nome}}, {{name}}, {{contact.name}} -> contact name
-              if (val === '{{nome}}' || val === '{{name}}' || val === '{{contact.name}}') {
-                return contact.name || 'Cliente';
-              }
-              // {{telefone}}, {{phone}}, {{contact.phone}} -> contact phone
-              if (val === '{{telefone}}' || val === '{{phone}}' || val === '{{contact.phone}}') {
-                return contact.phone;
-              }
-              // {{email}}, {{contact.email}} -> contact email
-              if (val === '{{email}}' || val === '{{contact.email}}') {
-                return (contact as any).email || (contact as any).custom_fields?.email || '';
-              }
-
-              // Check for custom field tokens like {{campo_personalizado}}
-              const customFieldMatch = val.match(/^\{\{(\w+)\}\}$/);
-              if (customFieldMatch) {
-                const fieldName = customFieldMatch[1];
-                const customFields = (contact as any).custom_fields || {};
-                if (customFields[fieldName] !== undefined) {
-                  return String(customFields[fieldName]);
-                }
-                // If custom field not found, return empty string to avoid sending literal {{field}}
-                console.warn(`[Dispatch] Custom field "${fieldName}" not found for contact ${contact.phone}`);
-                return '';
-              }
-
-              return val;
-            };
-
-            // [MODERNIZED] Structured Variable Parsing
-            // The frontend now sends: { header: ["val1"], body: ["val1", "val2"], buttons: { "button_0_0": "param" } }
-            if (template && Array.isArray(template.content)) {
-
-              // 1. HEADER
-              const headerComponent = template.content.find((c: any) => c.type === 'HEADER' && c.format === 'TEXT')
-              if (headerComponent && headerComponent.text) {
-                // MATCH: {{1}} OR {{variable_name}}
-                const matches = headerComponent.text.match(/\{\{([\w\d_]+)\}\}/g) || [];
-                matches.forEach((m: string, idx: number) => {
-                  const clean = m.replace(/[{}]/g, '');
-
-                  // New structure: templateVariables.header is an array
-                  // templateVariables.header[0] corresponds to {{1}} in the header
-                  let foundValue = undefined;
-
-                  const tvars = templateVariables as { header?: string[], body?: string[], buttons?: Record<string, string> } | undefined;
-                  if (tvars?.header && tvars.header[idx] !== undefined) {
-                    foundValue = tvars.header[idx];
-                  }
-
-                  headerVars.push(resolveValue(clean, foundValue));
-                });
-              }
-
-              // 2. BODY (deduplicate - same variable may appear multiple times in text)
-              const bodyComponent = template.content.find((c: any) => c.type === 'BODY')
-              if (bodyComponent && bodyComponent.text) {
-                const matches = bodyComponent.text.match(/\{\{([\w\d_]+)\}\}/g) || [];
-                const seenKeys = new Set<string>();
-                matches.forEach((m: string) => {
-                  const clean = m.replace(/[{}]/g, '');
-
-                  // Skip if we've already processed this variable
-                  if (seenKeys.has(clean)) return;
-                  seenKeys.add(clean);
-
-                  const idx = seenKeys.size - 1; // Use unique index based on Set size
-
-                  // New structure: templateVariables.body is an array
-                  // templateVariables.body[0] corresponds to {{1}} in the body
-                  let foundValue = undefined;
-
-                  const tvars = templateVariables as { header?: string[], body?: string[], buttons?: Record<string, string> } | undefined;
-                  if (tvars?.body && tvars.body[idx] !== undefined) {
-                    foundValue = tvars.body[idx];
-                  }
-
-                  bodyVars.push(resolveValue(clean, foundValue));
-                });
-              }
-
-              // 3. BUTTONS
-              const buttons = template.content.filter((c: any) => c.type === 'BUTTONS')
-              buttons.forEach((btnComp: any) => {
-                const btns = btnComp.buttons || []
-                btns.forEach((btn: any, btnIndex: number) => {
-                  if (btn.type === 'URL' && btn.url && btn.url.includes('{{')) {
-                    const matches = btn.url.match(/\{\{\d+\}\}/g) || []
-                    matches.forEach(() => {
-                      // New structure: templateVariables.buttons is a Record<string, string>
-                      // Key format: button_${btnIndex}_0
-                      let rawValue = undefined;
-
-                      const tvars = templateVariables as { header?: string[], body?: string[], buttons?: Record<string, string> } | undefined;
-                      if (tvars?.buttons) {
-                        rawValue = tvars.buttons[`button_${btnIndex}_0`];
-                      }
-
-                      buttonVars.push(resolveValue(`button`, rawValue));
-                    });
-                  }
-                })
-              })
-            } else {
-              // Fallback for when template is NOT in DB (Legacy / Race Condition)
-              console.warn('[Workflow] Legacy Parsing Fallback')
-
-              // Add contact name as first parameter
-              const resolvedName = contact.name || 'Cliente';
-              bodyVars.push(resolvedName);
-
-              if (templateVariables) {
-                const vars = Array.isArray(templateVariables)
-                  ? templateVariables
-                  : Object.values(templateVariables);
-
-                // Apply token resolution to each value and skip duplicates
-                vars.forEach(val => {
-                  const resolved = resolveValue('legacy', val);
-                  // Skip if it resolves to the same as contact.name (already added)
-                  // This prevents sending {{contact.name}} twice
-                  if (resolved !== resolvedName) {
-                    bodyVars.push(resolved);
-                  }
-                });
-              }
-            }
-
-            const whatsappPayload: any = {
-              messaging_product: 'whatsapp',
-              to: contact.phone,
-              type: 'template',
-              template: {
-                name: templateName,
-                language: { code: 'pt_BR' },
-                components: [],
+            // Contrato Ouro: pré-check/guard-rail por contato (documented-only)
+            const precheck = precheckContactForTemplate(
+              {
+                phone: contact.phone,
+                name: contact.name,
+                email: contact.email,
+                custom_fields: contact.custom_fields,
+                contactId: contact.contactId || null,
               },
-            }
+              template as any,
+              templateVariables as any
+            )
 
-            // Assemble Components
-            if (headerVars.length > 0) {
-              whatsappPayload.template.components.push({
-                type: 'header',
-                parameters: headerVars.map(text => ({ type: 'text', text }))
+            if (!precheck.ok) {
+              await updateContactStatus(campaignId, contact.phone, 'skipped', {
+                skipCode: precheck.skipCode,
+                skipReason: precheck.reason,
               })
+              skippedCount++
+              console.log(`⏭️ Skipped ${contact.phone}: ${precheck.reason}`)
+              continue
             }
 
-            if (bodyVars.length > 0) {
-              whatsappPayload.template.components.push({
-                type: 'body',
-                parameters: bodyVars.map(text => ({ type: 'text', text }))
-              })
+            // Claim idempotente: só 1 executor envia por contato
+            const claimed = await claimPendingForSend(campaignId, contact.phone)
+            if (!claimed) {
+              console.log(`↩️ Idempotência: ${contact.phone} não estava pending (ou já claimado), pulando envio.`)
+              continue
             }
 
-            if (buttonVars.length > 0) {
-              whatsappPayload.template.components.push({
-                type: 'button',
-                sub_type: 'url',
-                index: 0,
-                parameters: buttonVars.map(text => ({ type: 'text', text }))
-              })
-            }
+            const whatsappPayload: any = buildMetaTemplatePayload({
+              to: precheck.normalizedPhone,
+              templateName,
+              language: (template as any).language || 'pt_BR',
+              parameterFormat: (template as any).parameter_format || (template as any).parameterFormat || 'positional',
+              values: precheck.values,
+            })
 
-            console.log('--- META API PAYLOAD (SMART) ---', JSON.stringify(whatsappPayload, null, 2))
+            console.log('--- META API PAYLOAD (CONTRACT) ---', JSON.stringify(whatsappPayload, null, 2))
 
             const response = await fetch(
               `https://graph.facebook.com/v24.0/${phoneNumberId}/messages`,
@@ -302,7 +242,7 @@ export const { POST } = serve<CampaignWorkflowInput>(
               const messageId = data.messages[0].id
 
               // Update contact status in Supabase (stores message_id for webhook lookup)
-              await updateContactStatus(campaignId, contact.phone, 'sent', messageId)
+              await updateContactStatus(campaignId, contact.phone, 'sent', { messageId })
 
               sentCount++
               console.log(`✅ Sent to ${contact.phone}`)
@@ -314,7 +254,7 @@ export const { POST } = serve<CampaignWorkflowInput>(
               const errorWithCode = `(#${errorCode}) ${translatedError}`
 
               // Update contact status in Supabase
-              await updateContactStatus(campaignId, contact.phone, 'failed', undefined, errorWithCode)
+              await updateContactStatus(campaignId, contact.phone, 'failed', { error: errorWithCode })
 
               failedCount++
               console.log(`❌ Failed ${contact.phone}: ${errorWithCode}`)
@@ -326,7 +266,7 @@ export const { POST } = serve<CampaignWorkflowInput>(
           } catch (error) {
             // Update contact status in Supabase
             const errorMsg = error instanceof Error ? error.message : 'Erro desconhecido'
-            await updateContactStatus(campaignId, contact.phone, 'failed', undefined, errorMsg)
+            await updateContactStatus(campaignId, contact.phone, 'failed', { error: errorMsg })
             failedCount++
             console.error(`❌ Error sending to ${contact.phone}:`, error)
           }
@@ -338,11 +278,12 @@ export const { POST } = serve<CampaignWorkflowInput>(
         if (campaign) {
           await campaignDb.updateStatus(campaignId, {
             sent: campaign.sent + sentCount,
-            failed: campaign.failed + failedCount
+            failed: campaign.failed + failedCount,
+            skipped: (campaign as any).skipped + skippedCount
           })
         }
 
-        console.log(`📦 Batch ${batchIndex + 1}/${batches.length}: ${sentCount} sent, ${failedCount} failed`)
+        console.log(`📦 Batch ${batchIndex + 1}/${batches.length}: ${sentCount} sent, ${failedCount} failed, ${skippedCount} skipped`)
       })
     }
 
@@ -351,7 +292,7 @@ export const { POST } = serve<CampaignWorkflowInput>(
       const campaign = await campaignDb.getById(campaignId)
 
       let finalStatus = CampaignStatus.COMPLETED
-      if (campaign && campaign.failed === campaign.recipients && campaign.recipients > 0) {
+      if (campaign && (campaign.failed + (campaign as any).skipped) === campaign.recipients && campaign.recipients > 0) {
         finalStatus = CampaignStatus.FAILED
       }
 

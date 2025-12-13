@@ -16,6 +16,7 @@ export const useCampaignDetailsController = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<MessageStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isResendingSkipped, setIsResendingSkipped] = useState(false);
 
   // Fetch campaign data
   const campaignQuery = useQuery({
@@ -131,6 +132,21 @@ export const useCampaignDetailsController = () => {
     }
   });
 
+  const resendSkippedMutation = useMutation({
+    mutationFn: () => campaignService.resendSkipped(id!),
+    onSuccess: async (result) => {
+      toast.success(result.message || 'Ignorados reenfileirados')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['campaign', id] }),
+        queryClient.invalidateQueries({ queryKey: ['campaignMessages', id] }),
+        queryClient.invalidateQueries({ queryKey: ['campaigns'] }),
+      ])
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || 'Erro ao reenviar ignorados')
+    }
+  })
+
   const filteredMessages = useMemo(() => {
     if (!messages) return [];
     return messages.filter(m =>
@@ -144,9 +160,10 @@ export const useCampaignDetailsController = () => {
     if (!messages || messages.length === 0) return null;
     const sent = messages.filter(m => m.status === MessageStatus.SENT || m.status === MessageStatus.DELIVERED || m.status === MessageStatus.READ).length;
     const failed = messages.filter(m => m.status === MessageStatus.FAILED).length;
+    const skipped = messages.filter(m => m.status === MessageStatus.SKIPPED).length;
     const delivered = messages.filter(m => m.status === MessageStatus.DELIVERED || m.status === MessageStatus.READ).length;
     const read = messages.filter(m => m.status === MessageStatus.READ).length;
-    return { sent, failed, delivered, read, total: messages.length };
+    return { sent, failed, skipped, delivered, read, total: messages.length };
   }, [messages]);
 
   // Actions
@@ -167,6 +184,16 @@ export const useCampaignDetailsController = () => {
       startMutation.mutate();
     }
   };
+
+  const handleResendSkipped = async () => {
+    if (!id) return
+    setIsResendingSkipped(true)
+    try {
+      await resendSkippedMutation.mutateAsync()
+    } finally {
+      setIsResendingSkipped(false)
+    }
+  }
 
   // Can perform actions?
   const canPause = activeCampaign?.status === CampaignStatus.SENDING;
@@ -196,6 +223,8 @@ export const useCampaignDetailsController = () => {
     canPause,
     canResume,
     canStart,
+    onResendSkipped: handleResendSkipped,
+    isResendingSkipped,
     filterStatus,
     setFilterStatus,
   };

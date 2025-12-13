@@ -19,7 +19,7 @@ export async function GET(
 
     // Buscar template específico pelo nome
     const response = await fetch(
-      `https://graph.facebook.com/v24.0/${credentials.businessAccountId}/message_templates?name=${name}&fields=name,status,language,category,components,last_updated_time,quality_score,rejected_reason`,
+      `https://graph.facebook.com/v24.0/${credentials.businessAccountId}/message_templates?name=${name}&fields=name,status,language,category,parameter_format,components,last_updated_time,quality_score,rejected_reason`,
       {
         headers: { 'Authorization': `Bearer ${credentials.accessToken}` }
       }

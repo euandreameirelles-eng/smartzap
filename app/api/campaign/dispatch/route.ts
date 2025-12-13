@@ -2,12 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Client } from '@upstash/workflow'
 import { getWhatsAppCredentials } from '@/lib/whatsapp-credentials'
 import { supabase } from '@/lib/supabase'
+import { templateDb } from '@/lib/supabase-db'
+
+import { precheckContactForTemplate } from '@/lib/whatsapp/template-contract'
 
 import { ContactStatus } from '@/types'
 
 interface DispatchContact {
+  contactId?: string
+  contact_id?: string
   phone: string
   name: string
+  email?: string
   custom_fields?: Record<string, unknown>
 }
 
@@ -16,8 +22,6 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // Generate simple ID
-const generateId = () => Math.random().toString(36).substr(2, 9)
-
 // Trigger campaign dispatch workflow
 export async function POST(request: NextRequest) {
   const body = await request.json()
@@ -25,29 +29,72 @@ export async function POST(request: NextRequest) {
   let { contacts } = body
 
   // Get template variables from campaign if not provided directly
-  let resolvedTemplateVariables: string[] = templateVariables || []
-  if (!resolvedTemplateVariables.length) {
+  let resolvedTemplateVariables: any = templateVariables
+  if (!resolvedTemplateVariables) {
     const { data: campaign, error } = await supabase
       .from('campaigns')
       .select('template_variables')
       .eq('id', campaignId)
       .single()
 
-    if (campaign && campaign.template_variables) {
-      // Supabase JSONB columns return native JavaScript arrays, no JSON.parse needed
-      if (Array.isArray(campaign.template_variables)) {
-        resolvedTemplateVariables = campaign.template_variables
-      } else if (typeof campaign.template_variables === 'string') {
-        // Fallback for legacy string storage (should not happen with JSONB)
+    if (campaign && (campaign as any).template_variables != null) {
+      // JSONB should already be a native JS object; keep a string fallback for safety.
+      const tv = (campaign as any).template_variables
+      if (typeof tv === 'string') {
         try {
-          resolvedTemplateVariables = JSON.parse(campaign.template_variables)
+          resolvedTemplateVariables = JSON.parse(tv)
         } catch {
-          console.error('[Dispatch] Failed to parse template_variables string:', campaign.template_variables)
-          resolvedTemplateVariables = []
+          console.error('[Dispatch] Failed to parse template_variables string:', tv)
+          resolvedTemplateVariables = undefined
         }
+      } else {
+        resolvedTemplateVariables = tv
       }
     }
-    console.log(`[Dispatch] Loaded template_variables from database:`, resolvedTemplateVariables)
+    console.log('[Dispatch] Loaded template_variables from database:', resolvedTemplateVariables)
+  }
+
+  // Fetch template from local DB cache (source operacional). Documented-only: sem template, sem envio.
+  const template = await templateDb.getByName(templateName)
+  if (!template) {
+    return NextResponse.json(
+      { error: 'Template não encontrado no banco local. Sincronize Templates antes de disparar.' },
+      { status: 400 }
+    )
+  }
+
+  // Snapshot do template na campanha (fonte operacional por campanha)
+  try {
+    const snapshot = {
+      name: template.name,
+      language: template.language,
+      parameter_format: (template as any).parameterFormat || 'positional',
+      spec_hash: (template as any).specHash ?? null,
+      fetched_at: (template as any).fetchedAt ?? null,
+      components: (template as any).components || (template as any).content || [],
+    }
+
+    const { data: existing } = await supabase
+      .from('campaigns')
+      .select('template_spec_hash')
+      .eq('id', campaignId)
+      .single()
+
+    // Só setar snapshot se ainda não existir (evita drift/regravação em replays)
+    if (!(existing as any)?.template_spec_hash) {
+      await supabase
+        .from('campaigns')
+        .update({
+          template_snapshot: snapshot,
+          template_spec_hash: snapshot.spec_hash,
+          template_parameter_format: snapshot.parameter_format,
+          template_fetched_at: snapshot.fetched_at,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', campaignId)
+    }
+  } catch (e) {
+    console.warn('[Dispatch] Falha ao salvar snapshot do template na campanha (best-effort):', e)
   }
 
   // If no contacts provided, fetch from campaign_contacts (for cloned/scheduled campaigns)
@@ -55,7 +102,7 @@ export async function POST(request: NextRequest) {
     // First get campaign contacts with their contact_id
     const { data: existingContacts, error } = await supabase
       .from('campaign_contacts')
-      .select('phone, name, contact_id, custom_fields')
+      .select('phone, name, email, contact_id, custom_fields')
       .eq('campaign_id', campaignId)
 
     if (error) {
@@ -70,33 +117,109 @@ export async function POST(request: NextRequest) {
     contacts = existingContacts.map(row => ({
       phone: row.phone as string,
       name: (row.name as string) || '',
+      email: (row as any).email || undefined,
+      contactId: (row as any).contact_id || undefined,
       // Snapshot Pattern: prefer campaign_contacts.custom_fields (works for temp_* and clones)
       custom_fields: (row as any).custom_fields || {}
     }))
 
     console.log(`[Dispatch] Loaded ${contacts.length} contacts from database for campaign ${campaignId}`)
-  } else {
-    // Save contacts to campaign_contacts table in Supabase (Bulk Upsert)
-    try {
-      const dbContacts = (contacts as DispatchContact[]).map(c => ({
-        id: generateId(),
-        campaign_id: campaignId,
-        phone: c.phone,
-        name: c.name || '',
-        custom_fields: c.custom_fields || {},
-        status: 'pending'
-      }))
+  }
 
+  // =====================
+  // PRÉ-CHECK (Contrato Ouro)
+  // =====================
+  const nowIso = new Date().toISOString()
+  const inputContacts = (contacts as DispatchContact[])
+
+  const validContacts: DispatchContact[] = []
+  const skippedContacts: Array<{ contact: DispatchContact; code: string; reason: string; normalizedPhone?: string }> = []
+
+  for (const c of inputContacts) {
+    const contactId = c.contactId || c.contact_id
+    const precheck = precheckContactForTemplate(
+      {
+        phone: c.phone,
+        name: c.name,
+        email: c.email,
+        custom_fields: c.custom_fields,
+        contactId: contactId || null,
+      },
+      template as any,
+      resolvedTemplateVariables
+    )
+
+    if (!precheck.ok) {
+      skippedContacts.push({ contact: c, code: precheck.skipCode, reason: precheck.reason, normalizedPhone: precheck.normalizedPhone })
+      continue
+    }
+
+    validContacts.push({
+      ...c,
+      contactId,
+      phone: precheck.normalizedPhone,
+    })
+  }
+
+  // Persistir snapshot + status por contato (pending vs skipped)
+  try {
+    const rowsPending = validContacts.map(c => ({
+      campaign_id: campaignId,
+      contact_id: c.contactId || c.contact_id || null,
+      phone: c.phone,
+      name: c.name || '',
+      email: c.email || null,
+      custom_fields: c.custom_fields || {},
+      status: 'pending',
+      skipped_at: null,
+      skip_code: null,
+      skip_reason: null,
+      error: null,
+    }))
+
+    const rowsSkipped = skippedContacts.map(({ contact, code, reason, normalizedPhone }) => ({
+      campaign_id: campaignId,
+      contact_id: contact.contactId || contact.contact_id || null,
+      phone: normalizedPhone || contact.phone,
+      name: contact.name || '',
+      email: contact.email || null,
+      custom_fields: contact.custom_fields || {},
+      status: 'skipped',
+      skipped_at: nowIso,
+      skip_code: code,
+      skip_reason: reason,
+      error: null,
+    }))
+
+    const allRows = [...rowsPending, ...rowsSkipped]
+    if (allRows.length) {
       const { error } = await supabase
         .from('campaign_contacts')
-        .upsert(dbContacts, { onConflict: 'campaign_id, phone' })
+        .upsert(allRows, { onConflict: 'campaign_id, phone' })
 
       if (error) throw error
-
-      console.log(`[Dispatch] Saved ${contacts.length} contacts for campaign ${campaignId}`)
-    } catch (error) {
-      console.error('Failed to save campaign contacts:', error)
     }
+
+    console.log(`[Dispatch] Pré-check: ${validContacts.length} válidos, ${skippedContacts.length} ignorados (skipped)`)
+  } catch (error) {
+    console.error('[Dispatch] Failed to persist pre-check results:', error)
+    return NextResponse.json(
+      { error: 'Falha ao salvar validação de contatos' },
+      { status: 500 }
+    )
+  }
+
+  // Se não há ninguém válido, não faz sentido enfileirar workflow
+  if (validContacts.length === 0) {
+    return NextResponse.json(
+      {
+        status: 'skipped',
+        count: 0,
+        skipped: skippedContacts.length,
+        message: 'Nenhum contato válido para envio (todos foram ignorados pela validação).',
+      },
+      { status: 202 }
+    )
   }
 
   // Get credentials: Body (if valid) > Redis > Env
@@ -163,8 +286,16 @@ export async function POST(request: NextRequest) {
     const workflowPayload = {
       campaignId,
       templateName,
-      contacts: contacts as DispatchContact[],
+      contacts: validContacts as DispatchContact[],
       templateVariables: resolvedTemplateVariables,
+      templateSnapshot: {
+        name: template.name,
+        language: template.language,
+        parameter_format: (template as any).parameterFormat || 'positional',
+        spec_hash: (template as any).specHash ?? null,
+        fetched_at: (template as any).fetchedAt ?? null,
+        components: (template as any).components || (template as any).content || [],
+      },
       phoneNumberId,
       accessToken,
     }
@@ -202,8 +333,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       status: 'queued',
-      count: contacts.length,
-      message: `${contacts.length} mensagens enfileiradas com sucesso`
+      count: validContacts.length,
+      skipped: skippedContacts.length,
+      message: `${validContacts.length} mensagens enfileiradas • ${skippedContacts.length} ignoradas por validação`
     }, { status: 202 })
 
   } catch (error) {
