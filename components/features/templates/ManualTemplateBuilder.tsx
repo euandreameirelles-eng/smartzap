@@ -6,6 +6,18 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Code, Bold, Italic, Strikethrough, Plus, ChevronDown } from 'lucide-react'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -28,6 +40,26 @@ type ButtonType =
   | 'CATALOG'
   | 'MPM'
   | 'VOICE_CALL'
+
+function normalizeButtons(input: any[]): any[] {
+  const list = Array.isArray(input) ? input : []
+  const quickReplies = list.filter((b) => b?.type === 'QUICK_REPLY')
+  const others = list.filter((b) => b?.type !== 'QUICK_REPLY')
+  return [...quickReplies, ...others]
+}
+
+function countButtonsByType(buttons: any[], type: ButtonType): number {
+  return (Array.isArray(buttons) ? buttons : []).filter((b) => b?.type === type).length
+}
+
+function newButtonForType(type: ButtonType): any {
+  if (type === 'URL') return { type, text: '', url: 'https://' }
+  if (type === 'PHONE_NUMBER') return { type, text: '', phone_number: '' }
+  if (type === 'COPY_CODE') return { type, example: 'CODE123' }
+  if (type === 'OTP') return { type, otp_type: 'COPY_CODE', text: '' }
+  if (type === 'FLOW') return { type, text: '', flow_id: '', flow_action: 'navigate' }
+  return { type, text: '' }
+}
 
 function ensureBaseSpec(input: unknown): Spec {
   const s = (input && typeof input === 'object') ? { ...(input as any) } : {}
@@ -183,7 +215,7 @@ export function ManualTemplateBuilder({
 
   const updateButtons = (buttons: any[]) => {
     setSpec((prev: any) => {
-      const next = { ...prev, buttons }
+      const next = { ...prev, buttons: normalizeButtons(buttons) }
       onSpecChange(next)
       return next
     })
@@ -191,6 +223,28 @@ export function ManualTemplateBuilder({
 
   const header: any = spec.header
   const buttons: any[] = Array.isArray(spec.buttons) ? spec.buttons : []
+
+  const maxButtons = 10
+  const counts = {
+    total: buttons.length,
+    url: countButtonsByType(buttons, 'URL'),
+    phone: countButtonsByType(buttons, 'PHONE_NUMBER'),
+    copyCode: countButtonsByType(buttons, 'COPY_CODE'),
+  }
+
+  const canAddButtonType = (type: ButtonType): { ok: boolean; reason?: string } => {
+    if (counts.total >= maxButtons) return { ok: false, reason: 'Limite de 10 botões atingido.' }
+    if (type === 'URL' && counts.url >= 2) return { ok: false, reason: 'Limite de 2 botões de URL.' }
+    if (type === 'PHONE_NUMBER' && counts.phone >= 1) return { ok: false, reason: 'Limite de 1 botão de telefone.' }
+    if (type === 'COPY_CODE' && counts.copyCode >= 1) return { ok: false, reason: 'Limite de 1 botão de copiar código.' }
+    return { ok: true }
+  }
+
+  const addButton = (type: ButtonType) => {
+    const gate = canAddButtonType(type)
+    if (!gate.ok) return
+    updateButtons([...buttons, newButtonForType(type)])
+  }
 
   const variableMode: 'positional' | 'named' = spec.parameter_format || 'positional'
 
@@ -285,14 +339,14 @@ export function ManualTemplateBuilder({
   const canShowMediaSample = headerType === 'IMAGE' || headerType === 'VIDEO' || headerType === 'DOCUMENT'
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr),420px] gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px] gap-6 items-start">
       <div className="space-y-6">
         {/* CONFIG (equivalente ao passo anterior na Meta, mas mantemos aqui) */}
         <div className="glass-panel rounded-xl p-5">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="text-sm font-semibold text-white">Configuração do modelo</div>
-              <div className="text-xs text-gray-500">ID: <span className="font-mono">{id}</span></div>
+              <div className="text-xs text-gray-500">Nome, categoria e idioma do template.</div>
             </div>
           </div>
 
@@ -334,19 +388,10 @@ export function ManualTemplateBuilder({
                 </SelectContent>
               </Select>
             </div>
+          </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-300">parameter_format</label>
-              <Select value={spec.parameter_format || 'positional'} onValueChange={(v) => update({ parameter_format: v })}>
-                <SelectTrigger className="w-full bg-zinc-900 border-white/10 text-white">
-                  <SelectValue placeholder="Selecione" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="positional">Positional ({'{{1}}'})</SelectItem>
-                  <SelectItem value="named">Named ({'{{first_name}}'})</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="mt-3 text-xs text-gray-500">
+            ID do rascunho: <span className="font-mono">{id}</span>
           </div>
         </div>
 
@@ -582,138 +627,105 @@ export function ManualTemplateBuilder({
         </div>
 
         <div className="glass-panel rounded-xl p-5 space-y-4">
-          <div className="text-sm font-semibold text-white">Header</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-300">Formato</label>
-              <Select
-                value={header?.format || 'TEXT'}
-                onValueChange={(v) => {
-                  const format = v as HeaderFormat
-                  if (format === 'TEXT') updateHeader({ format: 'TEXT', text: '', example: null })
-                  else if (format === 'LOCATION') updateHeader({ format: 'LOCATION' })
-                  else updateHeader({ format, example: { header_handle: [''] } })
-                }}
-              >
-                <SelectTrigger className="w-full bg-zinc-900 border-white/10 text-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="TEXT">TEXT</SelectItem>
-                  <SelectItem value="IMAGE">IMAGE</SelectItem>
-                  <SelectItem value="VIDEO">VIDEO</SelectItem>
-                  <SelectItem value="DOCUMENT">DOCUMENT</SelectItem>
-                  <SelectItem value="LOCATION">LOCATION</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-300">Ativar</label>
-              <Select
-                value={spec.header ? 'yes' : 'no'}
-                onValueChange={(v) => {
-                  if (v === 'no') update({ header: null })
-                  else updateHeader({ format: 'TEXT', text: '', example: null })
-                }}
-              >
-                <SelectTrigger className="w-full bg-zinc-900 border-white/10 text-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="yes">Sim</SelectItem>
-                  <SelectItem value="no">Não</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {spec.header && header?.format === 'TEXT' ? (
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-300">Texto</label>
-              <Input
-                value={header.text || ''}
-                onChange={(e) => updateHeader({ ...header, text: e.target.value })}
-                className="bg-zinc-900 border-white/10 text-white"
-                placeholder="Ex.: Confirmação"
-              />
-            </div>
-          ) : null}
-
-          {spec.header && header && header.format && header.format !== 'TEXT' && header.format !== 'LOCATION' ? (
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-300">header_handle (mídia)</label>
-              <Input
-                value={header?.example?.header_handle?.[0] || ''}
-                onChange={(e) => updateHeader({ ...header, example: { ...(header.example || {}), header_handle: [e.target.value] } })}
-                className="bg-zinc-900 border-white/10 text-white"
-                placeholder="Cole o handle da mídia aqui (upload resumable será automatizado)"
-              />
-              <p className="text-xs text-gray-500">
-                Por enquanto, você pode colar o <span className="font-mono">header_handle</span>. Vou automatizar o upload em seguida.
-              </p>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="glass-panel rounded-xl p-5 space-y-4">
-          <div className="text-sm font-semibold text-white">Body</div>
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-gray-300">Texto</label>
-            <Textarea
-              value={spec.body?.text || ''}
-              onChange={(e) => {
-                const text = e.target.value
-                const example = defaultBodyExamples(text)
-                update({ body: { ...(spec.body || {}), text, example: example ? { body_text: example } : undefined } })
-              }}
-              className="bg-zinc-900 border-white/10 text-white min-h-32"
-              placeholder="Digite o texto do BODY (obrigatório)"
-            />
-            <div className="text-xs text-gray-500">
-              Variáveis detectadas: <span className="font-mono">{variableCount(spec.body?.text || '')}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="glass-panel rounded-xl p-5 space-y-4">
-          <div className="text-sm font-semibold text-white">Footer</div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              className="border-white/10 bg-zinc-900 hover:bg-white/5"
-              onClick={() => updateFooter(spec.footer ? null : { text: '' })}
-            >
-              {spec.footer ? 'Remover footer' : 'Adicionar footer'}
-            </Button>
-          </div>
-          {spec.footer ? (
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-300">Texto</label>
-              <Input
-                value={spec.footer?.text || ''}
-                onChange={(e) => updateFooter({ ...(spec.footer || {}), text: e.target.value })}
-                className="bg-zinc-900 border-white/10 text-white"
-              />
-            </div>
-          ) : null}
-        </div>
-
-        <div className="glass-panel rounded-xl p-5 space-y-4">
           <div className="flex items-center justify-between gap-4">
             <div>
               <div className="text-sm font-semibold text-white">Botões <span className="text-xs text-gray-500 font-normal">• Opcional</span></div>
               <div className="text-xs text-gray-400">É possível adicionar até 10 botões. Se adicionar mais de 3, eles aparecem em lista.</div>
             </div>
-            <Button
-              variant="outline"
-              className="border-white/10 bg-zinc-900 hover:bg-white/5"
-              onClick={() => updateButtons([...buttons, { type: 'QUICK_REPLY', text: '' }])}
-            >
-              <Plus className="w-4 h-4" />
-              Adicionar botão
-              <ChevronDown className="w-4 h-4 opacity-70" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="border-white/10 bg-zinc-900 hover:bg-white/5"
+                >
+                  <Plus className="w-4 h-4" />
+                  Adicionar botão
+                  <ChevronDown className="w-4 h-4 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-zinc-900 border-white/10 text-white min-w-60">
+                <DropdownMenuLabel className="text-xs text-gray-500 uppercase tracking-wider">
+                  Ações
+                </DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() => addButton('QUICK_REPLY')}
+                  disabled={!canAddButtonType('QUICK_REPLY').ok}
+                  className="cursor-pointer hover:bg-white/5 focus:bg-white/5"
+                >
+                  Resposta rápida
+                  <DropdownMenuShortcut>até 10</DropdownMenuShortcut>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => addButton('URL')}
+                  disabled={!canAddButtonType('URL').ok}
+                  className="cursor-pointer hover:bg-white/5 focus:bg-white/5"
+                >
+                  Visitar site
+                  <DropdownMenuShortcut>máx 2</DropdownMenuShortcut>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => addButton('PHONE_NUMBER')}
+                  disabled={!canAddButtonType('PHONE_NUMBER').ok}
+                  className="cursor-pointer hover:bg-white/5 focus:bg-white/5"
+                >
+                  Ligar
+                  <DropdownMenuShortcut>máx 1</DropdownMenuShortcut>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => addButton('COPY_CODE')}
+                  disabled={!canAddButtonType('COPY_CODE').ok}
+                  className="cursor-pointer hover:bg-white/5 focus:bg-white/5"
+                >
+                  Copiar código
+                  <DropdownMenuShortcut>máx 1</DropdownMenuShortcut>
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator className="bg-white/10" />
+
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="cursor-pointer hover:bg-white/5 focus:bg-white/5">
+                    Avançado
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="bg-zinc-900 border-white/10 text-white min-w-56">
+                    <DropdownMenuItem
+                      onClick={() => addButton('FLOW')}
+                      disabled={!canAddButtonType('FLOW').ok}
+                      className="cursor-pointer hover:bg-white/5 focus:bg-white/5"
+                    >
+                      Flow
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => addButton('OTP')}
+                      disabled={!canAddButtonType('OTP').ok}
+                      className="cursor-pointer hover:bg-white/5 focus:bg-white/5"
+                    >
+                      OTP
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => addButton('CATALOG')}
+                      disabled={!canAddButtonType('CATALOG').ok}
+                      className="cursor-pointer hover:bg-white/5 focus:bg-white/5"
+                    >
+                      Catálogo
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => addButton('MPM')}
+                      disabled={!canAddButtonType('MPM').ok}
+                      className="cursor-pointer hover:bg-white/5 focus:bg-white/5"
+                    >
+                      MPM
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => addButton('VOICE_CALL')}
+                      disabled={!canAddButtonType('VOICE_CALL').ok}
+                      className="cursor-pointer hover:bg-white/5 focus:bg-white/5"
+                    >
+                      Chamada de voz
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           {buttons.length === 0 ? (
@@ -930,6 +942,12 @@ export function ManualTemplateBuilder({
               ))}
             </div>
           )}
+
+          {counts.total >= maxButtons ? (
+            <div className="text-xs text-amber-300">
+              Você já atingiu o limite de {maxButtons} botões.
+            </div>
+          ) : null}
         </div>
 
         <div className={cn('glass-panel rounded-xl p-5 space-y-4', spec.category !== 'MARKETING' ? 'opacity-70' : '')}>
@@ -1040,7 +1058,7 @@ export function ManualTemplateBuilder({
         </div>
       </div>
 
-      <div className="space-y-6">
+      <div className="space-y-6 lg:sticky lg:top-6 self-start">
         <Preview spec={spec} />
 
         <div className="glass-panel rounded-xl p-4">
@@ -1053,7 +1071,7 @@ export function ManualTemplateBuilder({
             <div className="text-xs text-gray-400">{showDebug ? 'Ocultar' : 'Ver JSON'}</div>
           </button>
           {showDebug ? (
-            <pre className="mt-3 text-xs text-gray-300 font-mono whitespace-pre-wrap break-words">
+            <pre className="mt-3 text-xs text-gray-300 font-mono whitespace-pre-wrap wrap-break-word">
               {JSON.stringify(spec, null, 2)}
             </pre>
           ) : null}

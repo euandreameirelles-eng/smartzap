@@ -219,6 +219,64 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     sendFloorDelayMs: turboConfig?.sendFloorDelayMs ?? 0,
   }));
 
+  const TURBO_PRESETS = {
+    leve: {
+      label: 'Leve',
+      desc: 'Começa baixo e sobe bem devagar (mais seguro).',
+      values: {
+        sendConcurrency: 1,
+        batchSize: 10,
+        startMps: 10,
+        maxMps: 25,
+        minMps: 5,
+        cooldownSec: 45,
+        minIncreaseGapSec: 20,
+        sendFloorDelayMs: 150,
+      },
+    },
+    moderado: {
+      label: 'Moderado',
+      desc: 'Equilíbrio para listas médias/grandes.',
+      values: {
+        sendConcurrency: 2,
+        batchSize: 20,
+        startMps: 20,
+        maxMps: 60,
+        minMps: 5,
+        cooldownSec: 30,
+        minIncreaseGapSec: 15,
+        sendFloorDelayMs: 75,
+      },
+    },
+    agressivo: {
+      label: 'Agressivo',
+      desc: 'Sobe rápido e busca teto alto (pode bater 130429).',
+      values: {
+        sendConcurrency: 4,
+        batchSize: 50,
+        startMps: 30,
+        maxMps: 120,
+        minMps: 5,
+        cooldownSec: 20,
+        minIncreaseGapSec: 8,
+        sendFloorDelayMs: 0,
+      },
+    },
+  } as const;
+
+  type TurboPresetKey = keyof typeof TURBO_PRESETS;
+
+  const applyTurboPreset = (key: TurboPresetKey) => {
+    const preset = TURBO_PRESETS[key];
+    setTurboDraft((s) => ({
+      ...s,
+      ...preset.values,
+    }));
+    toast.message(`Preset aplicado: ${preset.label}`, {
+      description: preset.desc,
+    });
+  };
+
   // Keep draft in sync when server data arrives
   React.useEffect(() => {
     if (!turboConfig) return;
@@ -857,6 +915,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     />
                     Ativar modo turbo
                   </label>
+                </div>
+
+                <div className="mt-4 flex flex-col gap-2">
+                  <div className="text-xs text-gray-400">Perfis rápidos</div>
+                  <div className="flex flex-wrap gap-2">
+                    {(Object.keys(TURBO_PRESETS) as TurboPresetKey[]).map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => applyTurboPreset(k)}
+                        className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-white/10 rounded-lg transition-colors text-xs text-white"
+                        title={TURBO_PRESETS[k].desc}
+                      >
+                        {TURBO_PRESETS[k].label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-[11px] text-gray-500">
+                    Dica: se você aplicar um perfil que muda <span className="font-mono">startMps</span>, use “Resetar aprendizado” para o target atual acompanhar.
+                  </div>
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
