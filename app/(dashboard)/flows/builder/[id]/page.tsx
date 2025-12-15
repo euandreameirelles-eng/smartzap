@@ -3,7 +3,7 @@
 import React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Loader2, Save } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Loader2, Save, UploadCloud } from 'lucide-react'
 
 import { Page, PageActions, PageDescription, PageHeader, PageTitle } from '@/components/ui/page'
 import { Button } from '@/components/ui/button'
@@ -32,6 +32,7 @@ export default function FlowBuilderEditorPage({
   const [metaFlowId, setMetaFlowId] = React.useState<string>('')
   const [previewMode, setPreviewMode] = React.useState<'smartzap' | 'meta'>('meta')
   const [formPreviewJson, setFormPreviewJson] = React.useState<unknown>(null)
+  const latestFormSpecRef = React.useRef<any>(null)
   const [formPreview, setFormPreview] = React.useState<{
     title: string
     intro?: string
@@ -41,6 +42,7 @@ export default function FlowBuilderEditorPage({
 
   const handleFormPreviewChange = React.useCallback(
     ({ form, generatedJson }: { form: any; generatedJson: unknown }) => {
+      latestFormSpecRef.current = form
       setFormPreviewJson(generatedJson)
       setFormPreview({
         title: form?.title || '',
@@ -82,8 +84,9 @@ export default function FlowBuilderEditorPage({
 
   React.useEffect(() => {
     if (!flow) return
-    setName(flow.name || '')
-    setMetaFlowId(flow.meta_flow_id || '')
+    // Só sincroniza quando o registro muda (ou quando ainda não há valor no state)
+    setName((prev) => prev || flow.name || '')
+    setMetaFlowId((prev) => prev || flow.meta_flow_id || '')
   }, [flow?.id])
 
   const shouldShowLoading = controller.isLoading
@@ -114,6 +117,41 @@ export default function FlowBuilderEditorPage({
             >
               {controller.isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               Salvar meta
+            </Button>
+
+            <Button
+              onClick={async () => {
+                // 1) salva o que a UI tem agora (inclusive form/json gerados), 2) publica
+                const nextSpec = latestFormSpecRef.current
+                  ? { ...(controller.spec as any), form: latestFormSpecRef.current }
+                  : controller.spec
+
+                const flowJsonToSave = formPreviewJson || (flow as any)?.flow_json
+
+                await controller.saveAsync({
+                  name,
+                  metaFlowId: metaFlowId || undefined,
+                  ...(nextSpec ? { spec: nextSpec } : {}),
+                  ...(flowJsonToSave ? { flowJson: flowJsonToSave } : {}),
+                })
+
+                const updated = await controller.publishToMetaAsync({
+                  publish: true,
+                  categories: ['OTHER'],
+                  updateIfExists: true,
+                })
+
+                setMetaFlowId(updated.meta_flow_id || '')
+              }}
+              disabled={controller.isSaving || controller.isPublishingToMeta}
+              className="bg-primary-600 hover:bg-primary-500 text-white"
+            >
+              {(controller.isSaving || controller.isPublishingToMeta) ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <UploadCloud className="w-4 h-4" />
+              )}
+              Publicar na Meta
             </Button>
 
             <Link href="/flows/builder">
@@ -155,6 +193,22 @@ export default function FlowBuilderEditorPage({
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Meta Flow ID (opcional)</label>
                 <Input value={metaFlowId} onChange={(e) => setMetaFlowId(e.target.value)} placeholder="Cole o flow_id da Meta" />
+                {(flow as any)?.meta_status ? (
+                  <div className="mt-1 text-[11px] text-gray-500 flex items-center gap-2">
+                    <span>Status na Meta: <span className="text-gray-300">{String((flow as any).meta_status)}</span></span>
+                    {(flow as any)?.meta_preview_url ? (
+                      <a
+                        className="inline-flex items-center gap-1 text-gray-300 hover:text-white underline underline-offset-2"
+                        href={String((flow as any).meta_preview_url)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Abrir preview
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>

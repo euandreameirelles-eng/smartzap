@@ -5,6 +5,11 @@ export type FlowRow = {
   name: string
   status: string
   meta_flow_id: string | null
+  meta_status?: string | null
+  meta_preview_url?: string | null
+  meta_validation_errors?: any
+  meta_last_checked_at?: string | null
+  meta_published_at?: string | null
   template_key?: string | null
   flow_json?: any
   flow_version?: string | null
@@ -19,6 +24,11 @@ const FlowRowSchema = z.object({
   name: z.string(),
   status: z.string(),
   meta_flow_id: z.string().nullable().optional(),
+  meta_status: z.string().nullable().optional(),
+  meta_preview_url: z.string().nullable().optional(),
+  meta_validation_errors: z.any().optional(),
+  meta_last_checked_at: z.string().nullable().optional(),
+  meta_published_at: z.string().nullable().optional(),
   template_key: z.string().nullable().optional(),
   flow_json: z.any().optional(),
   flow_version: z.string().nullable().optional(),
@@ -134,5 +144,33 @@ export const flowsService = {
     if (!res.ok) {
       throw new Error(await readErrorMessage(res, 'Falha ao excluir flow'))
     }
+  },
+
+  async publishToMeta(
+    id: string,
+    input?: {
+      publish?: boolean
+      categories?: string[]
+      updateIfExists?: boolean
+    }
+  ): Promise<FlowRow> {
+    const res = await fetch(`/api/flows/${encodeURIComponent(id)}/meta/publish`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input || {}),
+    })
+
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      const msg = (data?.error && String(data.error)) || 'Falha ao publicar Flow na Meta'
+      const details = data?.issues ? `: ${Array.isArray(data.issues) ? data.issues.join(', ') : String(data.issues)}` : ''
+      throw new Error(`${msg}${details}`)
+    }
+
+    const row = data?.row
+    const parsed = FlowRowSchema.safeParse(row)
+    if (!parsed.success) throw new Error('Resposta inválida ao publicar Flow na Meta')
+    return parsed.data as any
   },
 }

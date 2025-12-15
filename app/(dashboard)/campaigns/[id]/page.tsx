@@ -33,6 +33,7 @@ export default function CampaignDetailsPage() {
       canCancelSchedule={controller.canCancelSchedule}
       isRealtimeConnected={controller.isRealtimeConnected}
       shouldShowRefreshButton={controller.shouldShowRefreshButton}
+      telemetry={controller.telemetry}
       isRefreshing={controller.isRefreshing}
       refetch={controller.refetch}
       filterStatus={controller.filterStatus}

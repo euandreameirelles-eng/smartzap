@@ -14,6 +14,8 @@ import {
   Wand2,
 } from 'lucide-react'
 
+import { toast } from 'sonner'
+
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -25,6 +27,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 import {
   FlowFormFieldType,
@@ -109,6 +119,10 @@ export function FlowFormBuilder(props: {
   const [form, setForm] = useState<FlowFormSpecV1>(initialForm)
   const [dirty, setDirty] = useState(false)
 
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+
   useEffect(() => {
     if (dirty) return
     setForm(initialForm)
@@ -127,6 +141,47 @@ export function FlowFormBuilder(props: {
   }, [dirty, form, generatedJson, issues, props.onPreviewChange])
 
   const canSave = issues.length === 0 && dirty && !props.isSaving
+
+  const generateWithAI = async () => {
+    if (aiLoading) return
+    if (!aiPrompt.trim() || aiPrompt.trim().length < 10) {
+      toast.error('Descreva melhor o que você quer (mínimo 10 caracteres)')
+      return
+    }
+
+    setAiLoading(true)
+    try {
+      const res = await fetch('/api/ai/generate-flow-form', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: aiPrompt.trim(),
+          titleHint: props.flowName,
+          maxQuestions: 10,
+        }),
+      })
+
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        const msg = (data?.error && String(data.error)) || 'Falha ao gerar formulário com IA'
+        const details = data?.details ? `: ${String(data.details)}` : ''
+        throw new Error(`${msg}${details}`)
+      }
+
+      const generatedForm = (data?.form || null) as FlowFormSpecV1 | null
+      if (!generatedForm) throw new Error('Resposta inválida da IA (form ausente)')
+
+      // Mantém o screenId atual, pois costuma ser usado no mapeamento/meta.
+      setForm((prev) => ({ ...generatedForm, screenId: prev.screenId || generatedForm.screenId }))
+      setDirty(true)
+      toast.success('Formulário gerado! Revise e salve quando estiver pronto.')
+      setAiOpen(false)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Falha ao gerar formulário com IA')
+    } finally {
+      setAiLoading(false)
+    }
+  }
 
   const update = (patch: Partial<FlowFormSpecV1>) => {
     setForm((prev) => ({ ...prev, ...patch }))
@@ -193,6 +248,17 @@ export function FlowFormBuilder(props: {
           </div>
 
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-white/10 bg-zinc-900 hover:bg-white/5"
+              disabled={props.isSaving}
+              onClick={() => setAiOpen(true)}
+            >
+              <Wand2 className="h-4 w-4" />
+              Gerar com IA
+            </Button>
+
             <Button
               type="button"
               variant="secondary"
@@ -518,6 +584,45 @@ export function FlowFormBuilder(props: {
           {JSON.stringify(generatedJson, null, 2)}
         </pre>
       </details>
+
+      <Dialog open={aiOpen} onOpenChange={setAiOpen}>
+        <DialogContent className="bg-zinc-950 border-white/10 text-white sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Gerar Flow com IA</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Escreva em linguagem natural o que você quer coletar. A IA vai sugerir as perguntas e você pode editar antes de salvar.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <label className="block text-xs text-gray-400">O que você quer no formulário?</label>
+            <Textarea
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              className="min-h-28 bg-zinc-900 border-white/10 text-white"
+              placeholder='Ex: "Quero um formulário de pré-cadastro para uma turma. Pergunte nome, telefone, e-mail, cidade, faixa de horário preferida e um opt-in para receber mensagens."'
+            />
+            <div className="text-[11px] text-zinc-500">
+              Observação: isso substitui as perguntas atuais do modo Formulário (você pode desfazer com Ctrl+Z apenas se ainda não salvou).
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="border-white/10 bg-zinc-900 hover:bg-white/5"
+              onClick={() => setAiOpen(false)}
+              disabled={aiLoading}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" onClick={generateWithAI} disabled={aiLoading || aiPrompt.trim().length < 10}>
+              {aiLoading ? 'Gerando…' : 'Gerar perguntas'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

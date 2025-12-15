@@ -26,6 +26,16 @@ export function useFlowEditorController(flowId: string) {
     onError: (e: Error) => toast.error(e.message || 'Erro ao salvar'),
   })
 
+  const publishMutation = useMutation({
+    mutationFn: (input?: { publish?: boolean; categories?: string[]; updateIfExists?: boolean }) => flowsService.publishToMeta(flowId, input),
+    onSuccess: (row) => {
+      qc.setQueryData(['flows', flowId], row)
+      qc.invalidateQueries({ queryKey: ['flows'] })
+      toast.success('Flow publicado na Meta')
+    },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao publicar na Meta'),
+  })
+
   const flow = flowQuery.data
 
   const spec = useMemo(() => {
@@ -59,5 +69,9 @@ export function useFlowEditorController(flowId: string) {
     saveAsync: (patch: { name?: string; metaFlowId?: string; spec?: unknown; templateKey?: string; flowJson?: unknown; mapping?: unknown }) =>
       updateMutation.mutateAsync(patch),
     isSaving: updateMutation.isPending,
+
+    publishToMeta: (input?: { publish?: boolean; categories?: string[]; updateIfExists?: boolean }) => publishMutation.mutate(input),
+    publishToMetaAsync: (input?: { publish?: boolean; categories?: string[]; updateIfExists?: boolean }) => publishMutation.mutateAsync(input),
+    isPublishingToMeta: publishMutation.isPending,
   }
 }

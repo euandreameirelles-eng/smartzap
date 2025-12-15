@@ -21,7 +21,7 @@ export const useCampaignDetailsController = () => {
   const [isResendingSkipped, setIsResendingSkipped] = useState(false);
   const [isCancelingSchedule, setIsCancelingSchedule] = useState(false);
 
-  // Fetch campaign data
+  // Fetch campaign data (com polling opcional calculado abaixo)
   const campaignQuery = useQuery({
     queryKey: ['campaign', id],
     queryFn: () => campaignService.getById(id!),
@@ -32,7 +32,7 @@ export const useCampaignDetailsController = () => {
   const campaign = campaignQuery.data;
 
   // Real-time updates via Supabase Realtime with smart debounce
-  const { isConnected: isRealtimeConnected, shouldShowRefreshButton } = useCampaignRealtime({
+  const { isConnected: isRealtimeConnected, shouldShowRefreshButton, telemetry } = useCampaignRealtime({
     campaignId: id,
     status: campaign?.status,
     recipients: campaign?.recipients || 0,
@@ -49,14 +49,11 @@ export const useCampaignDetailsController = () => {
 
   const isLargeCampaign = (campaign?.recipients || 0) >= 10000;
 
-  // Poll if: (connected as backup) OR (disconnected fallback) OR (large campaign needs polling as primary)
-  const shouldPoll = isActiveCampaign && (isRealtimeConnected || !isRealtimeConnected || isLargeCampaign);
-
   const pollingInterval = useMemo(() => {
-    if (!shouldPoll) return false as const;
+    if (!isActiveCampaign) return false as const;
     if (isLargeCampaign) return BACKUP_POLLING_INTERVAL;
     return isRealtimeConnected ? BACKUP_POLLING_INTERVAL : DISCONNECTED_POLLING_INTERVAL;
-  }, [shouldPoll, isLargeCampaign, isRealtimeConnected]);
+  }, [isActiveCampaign, isLargeCampaign, isRealtimeConnected]);
 
   const metricsQuery = useQuery({
     queryKey: ['campaignMetrics', id],
@@ -76,17 +73,7 @@ export const useCampaignDetailsController = () => {
     refetchInterval: pollingInterval,
   });
 
-  // Add polling to campaign query too
-  const campaignWithPolling = useQuery({
-    queryKey: ['campaign', id],
-    queryFn: () => campaignService.getById(id!),
-    enabled: !!id && !id.startsWith('temp_'),
-    staleTime: 5000,
-    refetchInterval: pollingInterval,
-  });
-
-  // Use the campaign data (prefer the polling-enabled query)
-  const activeCampaign = campaignWithPolling.data || campaign;
+  const activeCampaign = campaignQuery.data;
 
   // Extract messages from paginated response
   const messages: Message[] = useMemo(() => {
@@ -263,6 +250,7 @@ export const useCampaignDetailsController = () => {
     // Realtime status
     isRealtimeConnected,
     shouldShowRefreshButton,
+    telemetry,
     isRefreshing,
     refetch,
     // Actions

@@ -95,36 +95,10 @@ export const campaignService = {
       return undefined;
     }
 
-    const campaign = await response.json();
-
-    // Estratégia: usar status em tempo real (via API) enquanto a campanha está ativa.
-    // Quando concluir, o banco é a fonte da verdade.
-    const isActive = campaign.status === 'Enviando' || campaign.status === 'Agendado';
-
-    if (isActive) {
-      // Tenta buscar stats em tempo real (melhor UX durante envio)
-      try {
-        const statusResponse = await fetch(`/api/campaign/${id}/status`);
-        if (statusResponse.ok) {
-          const realStatus: CampaignStatusResponse = await statusResponse.json();
-          // Só sobrescreve se vierem dados úteis (evita "voltar" para 0)
-          if (realStatus.stats.sent > 0 || realStatus.stats.failed > 0) {
-            return {
-              ...campaign,
-              sent: realStatus.stats.sent,
-              delivered: realStatus.stats.delivered,
-              read: realStatus.stats.read,
-              failed: realStatus.stats.failed,
-            };
-          }
-        }
-      } catch (e) {
-        console.warn('Falha ao buscar stats em tempo real; usando banco:', e);
-      }
-    }
-
-    // Para campanhas concluídas (ou se status em tempo real falhar), use o banco (fonte da verdade)
-    return campaign;
+    // Importante: este endpoint já é no-store/force-dynamic.
+    // Chamadas extras ao endpoint /api/campaign/[id]/status eram redundantes (hoje ele lê do mesmo DB)
+    // e, quando cacheado por edge, causavam atraso perceptível na UI.
+    return await response.json();
   },
 
   getMetrics: async (id: string): Promise<any | null> => {
@@ -169,7 +143,10 @@ export const campaignService = {
   // Busca status em tempo real
   getRealStatus: async (id: string): Promise<CampaignStatusResponse | null> => {
     try {
-      const response = await fetch(`/api/campaign/${id}/status`);
+      const response = await fetch(`/api/campaign/${id}/status`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       if (response.ok) {
         return await response.json();
       }

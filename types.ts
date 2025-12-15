@@ -300,6 +300,76 @@ export interface RealtimeState {
   error?: string;
 }
 
+// =============================================================================
+// SUPABASE REALTIME BROADCAST (EPHEMERAL)
+// =============================================================================
+
+export type CampaignProgressBroadcastPhase =
+  | 'batch_start'
+  | 'batch_end'
+  | 'complete'
+
+export interface CampaignProgressBroadcastDelta {
+  sent: number
+  failed: number
+  skipped: number
+}
+
+/**
+ * Evento efêmero (não persistido) para sensação de tempo real.
+ * - Nunca deve conter PII (telefone, nome, conteúdo de mensagem).
+ * - Não é fonte da verdade: UI deve reconciliar com DB periodicamente.
+ */
+export interface CampaignProgressBroadcastPayload {
+  campaignId: string
+  traceId: string
+  batchIndex: number
+  seq: number
+  ts: number
+  delta?: CampaignProgressBroadcastDelta
+  phase?: CampaignProgressBroadcastPhase
+}
+
+// =============================================================================
+// REALTIME LATENCY TELEMETRY (DEBUG)
+// =============================================================================
+
+export interface RealtimeLatencyTelemetryBroadcast {
+  traceId: string
+  seq: number
+  serverTs: number
+  receivedAt: number
+  paintedAt: number
+  serverToClientMs: number
+  handlerToPaintMs: number
+  serverToPaintMs: number
+}
+
+export interface RealtimeLatencyTelemetryDbChange {
+  table: string
+  eventType: string
+  commitTimestamp: string
+  commitTs: number
+  receivedAt: number
+  paintedAt: number
+  commitToClientMs: number
+  handlerToPaintMs: number
+  commitToPaintMs: number
+}
+
+export interface RealtimeLatencyTelemetryRefetch {
+  startedAt: number
+  finishedAt?: number
+  durationMs?: number
+  reason: 'debounced_refetch'
+}
+
+export interface RealtimeLatencyTelemetry {
+  broadcast?: RealtimeLatencyTelemetryBroadcast
+  dbChange?: RealtimeLatencyTelemetryDbChange
+  refetch?: RealtimeLatencyTelemetryRefetch
+}
+
 export type ProjectStatus = 'draft' | 'submitted' | 'completed';
 
 export interface TemplateProject {

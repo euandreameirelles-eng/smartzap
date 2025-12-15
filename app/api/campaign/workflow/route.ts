@@ -10,6 +10,7 @@ import { recordStableBatch, recordThroughputExceeded, getAdaptiveThrottleConfigW
 import { normalizePhoneNumber } from '@/lib/phone-formatter'
 import { getActiveSuppressionsByPhone } from '@/lib/phone-suppressions'
 import { maybeAutoSuppressByFailure } from '@/lib/auto-suppression'
+import { createCampaignProgressBroadcaster, broadcastCampaignPhase } from '@/lib/realtime-broadcast-server'
 import { createHash } from 'crypto'
 
 function hashConfig(input: unknown): string {
@@ -70,6 +71,39 @@ async function claimPendingForSend(
   }
   const claimed = Array.isArray(data) && data.length > 0
   return claimed ? now : null
+}
+
+async function bulkClaimPendingForSend(
+  campaignId: string,
+  contacts: Array<{ contactId: string }>,
+  traceId?: string
+): Promise<{ claimedAt: string | null; claimedIds: Set<string> }> {
+  const ids = Array.from(
+    new Set(
+      (contacts || [])
+        .map((c) => String(c.contactId || '').trim())
+        .filter(Boolean)
+    )
+  )
+
+  if (ids.length === 0) return { claimedAt: null, claimedIds: new Set() }
+
+  const now = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('campaign_contacts')
+    .update({ status: 'sending', sending_at: now, trace_id: traceId || null })
+    .eq('campaign_id', campaignId)
+    .eq('status', 'pending')
+    .in('contact_id', ids)
+    .select('contact_id')
+
+  if (error) {
+    console.warn('[Workflow] Falha no bulk claim pending->sending (seguindo sem enviar):', error)
+    return { claimedAt: null, claimedIds: new Set() }
+  }
+
+  const claimedIds = new Set<string>((data || []).map((r: any) => String(r.contact_id)))
+  return { claimedAt: claimedIds.size > 0 ? now : null, claimedIds }
 }
 
 /**
@@ -274,7 +308,27 @@ export const { POST } = serve<CampaignWorkflowInput>(
           ? Math.max(1, Math.min(50, Math.floor(rawConcurrency)))
           : 1
 
+        // Broadcast efêmero de progresso (UI em tempo real) — best-effort.
+        // DB continua sendo a fonte da verdade; isto só melhora UX.
+        const progress = createCampaignProgressBroadcaster({
+          campaignId,
+          traceId,
+          batchIndex,
+          flushIntervalMs: 250,
+        })
+
         try {
+          // Sinaliza início do batch para a UI (sem depender de Postgres changes)
+          try {
+            await broadcastCampaignPhase(campaignId, {
+              traceId,
+              batchIndex,
+              phase: 'batch_start',
+            })
+          } catch {
+            // best-effort
+          }
+
           const template: any = templateSnapshot || (await templateDb.getByName(templateName))
           if (!template) throw new Error(`Template ${templateName} não encontrado no banco local. Sincronize Templates.`)
 
@@ -363,13 +417,86 @@ export const { POST } = serve<CampaignWorkflowInput>(
             console.warn('[Workflow] Falha ao carregar phone_suppressions (best-effort):', e)
           }
 
+          // =====================================================================
+          // Bulk claim (pending -> sending) para remover round-trips por contato.
+          // A partir daqui, só processamos contatos que foram realmente claimados.
+          // =====================================================================
+          const claimT0 = Date.now()
+          const { claimedAt, claimedIds } = await bulkClaimPendingForSend(
+            campaignId,
+            batch.map((c) => ({ contactId: String(c.contactId) })),
+            traceId
+          )
+          dbTimeMs += Date.now() - claimT0
+
+          if (claimedAt && !firstDispatchAtInBatch) firstDispatchAtInBatch = claimedAt
+
+          await emitWorkflowTrace({
+            traceId,
+            campaignId,
+            step,
+            batchIndex,
+            phase: 'db_claim_pending_bulk',
+            ok: true,
+            ms: Date.now() - claimT0,
+            extra: {
+              requested: batch.length,
+              claimed: claimedIds.size,
+            },
+          })
+
+          if (claimedIds.size === 0) {
+            console.log(`↩️ Idempotência: nenhum contato estava pending no batch ${batchIndex}, pulando.`)
+            return
+          }
+
+          type ContactWriteOpts = {
+            // Timestamp ISO do início do processamento do contato (mantém utilidade de sending_at sem round-trip por contato)
+            sendingAt?: string
+            messageId?: string
+            error?: string
+            errorCode?: number
+            errorTitle?: string
+            errorDetails?: string
+            errorFbtraceId?: string
+            errorSubcode?: number
+            errorHref?: string
+            skipCode?: string
+            skipReason?: string
+            traceId?: string
+          }
+
+          type PendingWriteOp = {
+            contact: Contact
+            status: 'sent' | 'failed' | 'skipped'
+            opts?: ContactWriteOpts
+          }
+
+          const writeOps: PendingWriteOp[] = []
+
+          const pushWriteOp = (op: PendingWriteOp) => {
+            writeOps.push(op)
+          }
+
           const processContact = async (contact: Contact) => {
+            // Timestamp do início do processamento (precisa existir mesmo se cair no catch)
+            const sendingAtIso = new Date().toISOString()
+
             try {
               const phoneMasked = maskPhone(contact.phone)
+
+              // Só processa se foi claimado agora (idempotência + retry safe)
+              if (!claimedIds.has(String(contact.contactId))) {
+                return
+              }
 
               if (limiter) {
                 await limiter.acquire()
               }
+
+              // Marca o início do processamento deste contato.
+              // Persistimos via bulk upsert para manter a utilidade de `sending_at`
+              // sem round-trip por contato.
 
             // Contrato Ouro: pré-check/guard-rail por contato (documented-only)
             const precheck = precheckContactForTemplate(
@@ -385,13 +512,16 @@ export const { POST } = serve<CampaignWorkflowInput>(
             )
 
             if (!precheck.ok) {
-              const t0 = Date.now()
-              await updateContactStatus(campaignId, { contactId: contact.contactId as string, phone: contact.phone }, 'skipped', {
-                skipCode: precheck.skipCode,
-                skipReason: precheck.reason,
-                traceId,
+              pushWriteOp({
+                contact,
+                status: 'skipped',
+                opts: {
+                  sendingAt: sendingAtIso,
+                  skipCode: precheck.skipCode,
+                  skipReason: precheck.reason,
+                  traceId,
+                },
               })
-              dbTimeMs += Date.now() - t0
 
               await emitWorkflowTrace({
                 traceId,
@@ -405,19 +535,23 @@ export const { POST } = serve<CampaignWorkflowInput>(
                 extra: { skipCode: precheck.skipCode, reason: precheck.reason },
               })
               skippedCount++
+              progress.bump({ skipped: 1 })
               console.log(`⏭️ Skipped ${contact.phone}: ${precheck.reason}`)
               return
             }
 
             // Opt-out e supressão global (defensivo: também roda aqui, mesmo que o dispatch tenha filtrado)
             if (optOutContactIds.has(String(contact.contactId))) {
-              const t0 = Date.now()
-              await updateContactStatus(campaignId, { contactId: contact.contactId as string, phone: contact.phone }, 'skipped', {
-                skipCode: 'OPT_OUT',
-                skipReason: 'Contato opt-out (não quer receber mensagens).',
-                traceId,
+              pushWriteOp({
+                contact,
+                status: 'skipped',
+                opts: {
+                  sendingAt: sendingAtIso,
+                  skipCode: 'OPT_OUT',
+                  skipReason: 'Contato opt-out (não quer receber mensagens).',
+                  traceId,
+                },
               })
-              dbTimeMs += Date.now() - t0
 
               await emitWorkflowTrace({
                 traceId,
@@ -431,19 +565,23 @@ export const { POST } = serve<CampaignWorkflowInput>(
               })
 
               skippedCount++
+              progress.bump({ skipped: 1 })
               console.log(`⏭️ Skipped (opt-out) ${contact.phone}`)
               return
             }
 
             const suppression = suppressionsByPhone.get(precheck.normalizedPhone)
             if (suppression) {
-              const t0 = Date.now()
-              await updateContactStatus(campaignId, { contactId: contact.contactId as string, phone: contact.phone }, 'skipped', {
-                skipCode: 'SUPPRESSED',
-                skipReason: `Telefone suprimido globalmente${suppression.reason ? `: ${suppression.reason}` : ''}`,
-                traceId,
+              pushWriteOp({
+                contact,
+                status: 'skipped',
+                opts: {
+                  sendingAt: sendingAtIso,
+                  skipCode: 'SUPPRESSED',
+                  skipReason: `Telefone suprimido globalmente${suppression.reason ? `: ${suppression.reason}` : ''}`,
+                  traceId,
+                },
               })
-              dbTimeMs += Date.now() - t0
 
               await emitWorkflowTrace({
                 traceId,
@@ -458,56 +596,12 @@ export const { POST } = serve<CampaignWorkflowInput>(
               })
 
               skippedCount++
+              progress.bump({ skipped: 1 })
               console.log(`⏭️ Skipped (suppressed) ${contact.phone}`)
               return
             }
 
-            // Claim idempotente: só 1 executor envia por contato
-            // Observação: o timing sozinho não diz se o claim ocorreu; registramos claimed=true/false.
-            let claimed = false
-            let claimedAt: string | null = null
-            {
-              const t0 = Date.now()
-              try {
-                claimedAt = await claimPendingForSend(
-                  campaignId,
-                  { contactId: contact.contactId as string, phone: contact.phone },
-                  traceId
-                )
-                claimed = Boolean(claimedAt)
-                if (claimedAt && !firstDispatchAtInBatch) firstDispatchAtInBatch = claimedAt
-                await emitWorkflowTrace({
-                  traceId,
-                  campaignId,
-                  step,
-                  batchIndex,
-                  contactId: contact.contactId,
-                  phoneMasked,
-                  phase: 'db_claim_pending',
-                  ok: true,
-                  ms: Date.now() - t0,
-                  extra: { claimed },
-                })
-              } catch (err) {
-                await emitWorkflowTrace({
-                  traceId,
-                  campaignId,
-                  step,
-                  batchIndex,
-                  contactId: contact.contactId,
-                  phoneMasked,
-                  phase: 'db_claim_pending',
-                  ok: false,
-                  ms: Date.now() - t0,
-                  extra: { error: err instanceof Error ? err.message : String(err) },
-                })
-                throw err
-              }
-            }
-            if (!claimed) {
-              console.log(`↩️ Idempotência: ${contact.phone} não estava pending (ou já claimado), pulando envio.`)
-              return
-            }
+            // Claim foi feito em bulk no início do batch.
 
             const whatsappPayload: any = buildMetaTemplatePayload({
               to: precheck.normalizedPhone,
@@ -568,12 +662,12 @@ export const { POST } = serve<CampaignWorkflowInput>(
             if (response.ok && data.messages?.[0]?.id) {
               const messageId = data.messages[0].id
 
-              // Update contact status in Supabase (stores message_id for webhook lookup)
-              {
-                const t0 = Date.now()
-                await updateContactStatus(campaignId, { contactId: contact.contactId as string, phone: contact.phone }, 'sent', { messageId, traceId })
-                dbTimeMs += Date.now() - t0
-              }
+              // Status será persistido em bulk ao final do batch.
+              pushWriteOp({
+                contact,
+                status: 'sent',
+                opts: { sendingAt: sendingAtIso, messageId, traceId },
+              })
 
               // Métrica operacional: quando foi o último "sent" (envio/dispatch), sem depender de delivery.
               lastSentAtInBatch = new Date().toISOString()
@@ -592,6 +686,7 @@ export const { POST } = serve<CampaignWorkflowInput>(
               })
 
               sentCount++
+              progress.bump({ sent: 1 })
               console.log(`✅ Sent to ${contact.phone}`)
             } else {
               // Extract error code and translate to Portuguese
@@ -662,26 +757,22 @@ export const { POST } = serve<CampaignWorkflowInput>(
                 },
               })
 
-              // Update contact status in Supabase
-              {
-                const t0 = Date.now()
-                await updateContactStatus(
-                  campaignId,
-                  { contactId: contact.contactId as string, phone: contact.phone },
-                  'failed',
-                  {
-                    error: errorWithCode,
-                    errorCode,
-                    errorTitle: metaTitle || undefined,
-                    errorDetails: metaDetails || metaMessage || undefined,
-                    errorFbtraceId: metaFbtraceId || undefined,
-                    errorSubcode: metaSubcode,
-                    errorHref: metaHref || undefined,
-                    traceId,
-                  }
-                )
-                dbTimeMs += Date.now() - t0
-              }
+              // Status será persistido em bulk ao final do batch.
+              pushWriteOp({
+                contact,
+                status: 'failed',
+                opts: {
+                  sendingAt: sendingAtIso,
+                  error: errorWithCode,
+                  errorCode,
+                  errorTitle: metaTitle || undefined,
+                  errorDetails: metaDetails || metaMessage || undefined,
+                  errorFbtraceId: metaFbtraceId || undefined,
+                  errorSubcode: metaSubcode,
+                  errorHref: metaHref || undefined,
+                  traceId,
+                },
+              })
 
               // Auto-supressão agressiva (cross-campaign) — best-effort
               // Importante: não deve interromper o workflow; serve para proteger qualidade da conta.
@@ -718,6 +809,7 @@ export const { POST } = serve<CampaignWorkflowInput>(
               }
 
               failedCount++
+              progress.bump({ failed: 1 })
               console.log(`❌ Failed ${contact.phone}: ${errorWithCode}`)
             }
 
@@ -746,22 +838,19 @@ export const { POST } = serve<CampaignWorkflowInput>(
                 extra: { error: errorMsg },
               })
 
-              {
-                const t0 = Date.now()
-                await updateContactStatus(
-                  campaignId,
-                  { contactId: contact.contactId as string, phone: contact.phone },
-                  'failed',
-                  {
-                    error: errorMsg,
-                    errorTitle: 'Contact exception',
-                    errorDetails: errorMsg,
-                    traceId,
-                  }
-                )
-                dbTimeMs += Date.now() - t0
-              }
+              pushWriteOp({
+                contact,
+                status: 'failed',
+                opts: {
+                  sendingAt: sendingAtIso,
+                  error: errorMsg,
+                  errorTitle: 'Contact exception',
+                  errorDetails: errorMsg,
+                  traceId,
+                },
+              })
               failedCount++
+              progress.bump({ failed: 1 })
               console.error(`❌ Error sending to ${contact.phone}:`, error)
             }
           }
@@ -784,11 +873,166 @@ export const { POST } = serve<CampaignWorkflowInput>(
 
           await Promise.allSettled(workers)
 
+          // Garante que qualquer delta pendente seja publicado antes de finalizar o batch.
+          try {
+            await progress.flush()
+          } catch {
+            // best-effort
+          }
+
+          // =====================================================================
+          // Persistência bulk dos resultados do batch (reduz DB overhead)
+          // =====================================================================
+          if (writeOps.length > 0) {
+            const upsertRows = writeOps.map((op) => {
+              const cid = String(op.contact.contactId)
+              const base: any = {
+                campaign_id: campaignId,
+                contact_id: cid,
+                trace_id: traceId,
+                status: op.status,
+                sending_at: op.opts?.sendingAt || null,
+              }
+
+              // Reset campos (idempotente) conforme status final
+              if (op.status === 'sent') {
+                const now = new Date().toISOString()
+                base.sent_at = now
+                base.failed_at = null
+                base.skipped_at = null
+                base.message_id = op.opts?.messageId || null
+                base.error = null
+                base.skip_code = null
+                base.skip_reason = null
+                base.failure_code = null
+                base.failure_reason = null
+                base.failure_title = null
+                base.failure_details = null
+                base.failure_fbtrace_id = null
+                base.failure_subcode = null
+                base.failure_href = null
+              } else if (op.status === 'skipped') {
+                const now = new Date().toISOString()
+                base.skipped_at = now
+                base.sent_at = null
+                base.failed_at = null
+                base.message_id = null
+                base.error = null
+                base.skip_code = op.opts?.skipCode || null
+                base.skip_reason = op.opts?.skipReason || op.opts?.error || null
+                base.failure_code = null
+                base.failure_reason = null
+                base.failure_title = null
+                base.failure_details = null
+                base.failure_fbtrace_id = null
+                base.failure_subcode = null
+                base.failure_href = null
+              } else if (op.status === 'failed') {
+                const now = new Date().toISOString()
+                base.failed_at = now
+                base.sent_at = null
+                base.skipped_at = null
+                base.message_id = null
+                base.error = op.opts?.error || null
+
+                const errorCode = op.opts?.errorCode
+                if (typeof errorCode === 'number') base.failure_code = errorCode
+                const title = op.opts?.errorTitle
+                const details = op.opts?.errorDetails
+                const fbtrace = op.opts?.errorFbtraceId
+                const subcode = op.opts?.errorSubcode
+                const href = op.opts?.errorHref
+
+                if (typeof title === 'string') base.failure_title = normalizeMetaErrorTextForStorage(title, 200)
+                if (typeof details === 'string') base.failure_details = normalizeMetaErrorTextForStorage(details, 800)
+                if (typeof fbtrace === 'string') base.failure_fbtrace_id = normalizeMetaErrorTextForStorage(fbtrace, 200)
+                if (typeof subcode === 'number') base.failure_subcode = subcode
+                if (typeof href === 'string') base.failure_href = normalizeMetaErrorTextForStorage(href, 400)
+                if (typeof op.opts?.error === 'string' && String(op.opts?.error).trim()) {
+                  base.failure_reason = op.opts?.error
+                }
+
+                base.skip_code = null
+                base.skip_reason = null
+              }
+
+              return base
+            })
+
+            const t0 = Date.now()
+            const { error: bulkErr } = await supabase
+              .from('campaign_contacts')
+              .upsert(upsertRows, { onConflict: 'campaign_id,contact_id' })
+            dbTimeMs += Date.now() - t0
+
+            if (bulkErr) {
+              console.warn('[Workflow] Bulk upsert campaign_contacts falhou; fallback por contato:', bulkErr)
+              await emitWorkflowTrace({
+                traceId,
+                campaignId,
+                step,
+                batchIndex,
+                phase: 'db_bulk_upsert_contacts',
+                ok: false,
+                ms: Date.now() - t0,
+                extra: { error: bulkErr.message, rows: upsertRows.length },
+              })
+
+              // Fallback seguro (mais lento, mas preserva consistência)
+              const fb0 = Date.now()
+              for (const op of writeOps) {
+                try {
+                  await updateContactStatus(
+                    campaignId,
+                    { contactId: String(op.contact.contactId), phone: op.contact.phone },
+                    op.status,
+                    op.opts as any
+                  )
+                } catch {
+                  // best-effort
+                }
+              }
+              dbTimeMs += Date.now() - fb0
+            } else {
+              await emitWorkflowTrace({
+                traceId,
+                campaignId,
+                step,
+                batchIndex,
+                phase: 'db_bulk_upsert_contacts',
+                ok: true,
+                ms: Date.now() - t0,
+                extra: { rows: upsertRows.length },
+              })
+            }
+          }
+
         } catch (err) {
           batchOk = false
           batchError = err instanceof Error ? err.message : String(err)
           throw err
         } finally {
+          // Sinaliza fim do batch e faz flush final
+          try {
+            await progress.flush({ phase: 'batch_end' })
+          } catch {
+            // best-effort
+          }
+          try {
+            await broadcastCampaignPhase(campaignId, {
+              traceId,
+              batchIndex,
+              phase: 'batch_end',
+            })
+          } catch {
+            // best-effort
+          }
+          try {
+            await progress.stop()
+          } catch {
+            // best-effort
+          }
+
           if (limiter) {
             try {
               limiter.stop()
@@ -957,6 +1201,17 @@ export const { POST } = serve<CampaignWorkflowInput>(
         ok: true,
         extra: { finalStatus },
       })
+
+      // Broadcast best-effort: força reconciliação imediata na UI.
+      try {
+        await broadcastCampaignPhase(campaignId, {
+          traceId,
+          batchIndex: -1,
+          phase: 'complete',
+        })
+      } catch {
+        // best-effort
+      }
 
       // Persistência best-effort do "run" (baseline / evolução).
       try {
