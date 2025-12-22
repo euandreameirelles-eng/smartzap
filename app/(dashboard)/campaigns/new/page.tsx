@@ -1280,186 +1280,176 @@ export default function CampaignsNewRealPage() {
           </div>
           {step === 1 && (
             <div className="space-y-6">
-              <div className="rounded-2xl border border-white/10 bg-zinc-900/40 px-5 py-3 shadow-[0_10px_26px_rgba(0,0,0,0.3)]">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-                  <input
-                    className="w-full flex-1 rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-1.5 text-sm text-white placeholder:text-gray-600"
-                    placeholder="Nome da campanha"
-                    value={campaignName}
-                    onChange={(event) => setCampaignName(event.target.value)}
-                    aria-label="Nome da campanha"
-                  />
-                  <div className="relative w-full lg:w-45">
-                    <select
-                      className="w-full appearance-none rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-1.5 pr-9 text-sm text-white"
-                      aria-label="Objetivo da campanha"
-                    >
-                      <option>Utilidade</option>
-                      <option>Marketing</option>
-                      <option>Suporte</option>
-                    </select>
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-base text-emerald-200">
-                      ▾
-                    </span>
-                  </div>
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                <input
+                  className="w-full flex-1 rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-2 text-sm text-white placeholder:text-gray-600"
+                  placeholder="Nome da campanha"
+                  value={campaignName}
+                  onChange={(event) => setCampaignName(event.target.value)}
+                  aria-label="Nome da campanha"
+                />
+                <div className="relative w-full lg:w-45">
+                  <select
+                    className="w-full appearance-none rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 pr-9 text-sm text-white"
+                    aria-label="Objetivo da campanha"
+                  >
+                    <option>Utilidade</option>
+                    <option>Marketing</option>
+                    <option>Suporte</option>
+                  </select>
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-base text-emerald-200">
+                    ▾
+                  </span>
                 </div>
               </div>
 
-              <div
-                className={`rounded-2xl border border-white/10 bg-zinc-900/40 shadow-[0_10px_26px_rgba(0,0,0,0.3)] ${
-                  templateSelected ? 'px-6 py-4' : 'p-6'
-                }`}
-              >
-                {templateSelected ? (
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-2 text-sm">
-                      <div className="flex items-center gap-3">
-                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-emerald-400/40 text-[10px] text-emerald-300">
-                          ✓
+              {templateSelected ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-2 text-sm">
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-emerald-400/40 text-[10px] text-emerald-300">
+                      ✓
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-semibold text-white">{selectedTemplate?.name}</span>
+                      {selectedTemplate?.category && (
+                        <span className="text-[10px] uppercase tracking-widest text-gray-500">
+                          {selectedTemplate.category}
                         </span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-base font-semibold text-white">{selectedTemplate?.name}</span>
-                          {selectedTemplate?.category && (
-                            <span className="text-[10px] uppercase tracking-widest text-gray-500">
-                              {selectedTemplate.category}
-                            </span>
-                          )}
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTemplateSelected(false)
+                      setPreviewTemplate(null)
+                    }}
+                    className="text-xs text-emerald-400/80 hover:text-emerald-300"
+                  >
+                    Trocar
+                  </button>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-white/10 bg-zinc-900/40 p-6 shadow-[0_10px_26px_rgba(0,0,0,0.3)]">
+                  <div className="space-y-1">
+                    <h2 className="text-lg font-semibold text-white">Template</h2>
+                    <p className="text-sm text-gray-500">Busque e escolha o template da campanha.</p>
+                  </div>
+
+                  <div className="mt-5">
+                    <label className="text-xs uppercase tracking-widest text-gray-500">Buscar template</label>
+                    <input
+                      className="mt-2 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-3 text-sm text-white placeholder:text-gray-600"
+                      placeholder="Digite o nome do template..."
+                      value={templateSearch}
+                      onChange={(event) => setTemplateSearch(event.target.value)}
+                    />
+                    {templatesQuery.isLoading && (
+                      <div className="mt-2 text-xs text-gray-500">Carregando templates...</div>
+                    )}
+                    {templatesQuery.isError && (
+                      <div className="mt-2 text-xs text-amber-300">
+                        Falha ao carregar templates. Verifique as credenciais.
+                      </div>
+                    )}
+                    {!templatesQuery.isLoading && !templatesQuery.isError && templateOptions.length === 0 && (
+                      <div className="mt-2 text-xs text-amber-300">Nenhum template aprovado encontrado.</div>
+                    )}
+                  </div>
+
+                  {showAllTemplates ? (
+                    <div className="mt-5 rounded-2xl border border-white/10 bg-zinc-950/40 p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs uppercase tracking-widest text-gray-500">Todos os templates</div>
+                        <button
+                          type="button"
+                          onClick={() => setShowAllTemplates(false)}
+                          className="text-xs text-gray-400 hover:text-white"
+                        >
+                          Voltar para recentes
+                        </button>
+                      </div>
+                      <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-2 text-sm">
+                        {filteredTemplates.map((template) => (
+                          <button
+                            key={template.id}
+                            type="button"
+                            onMouseEnter={() => setPreviewTemplate(template)}
+                            onMouseLeave={() => setPreviewTemplate(null)}
+                            onClick={() => {
+                              setSelectedTemplate(template)
+                              setTemplateSelected(true)
+                              setPreviewTemplate(null)
+                            }}
+                            className="w-full rounded-lg border border-white/10 bg-zinc-950/40 px-3 py-2 text-left text-gray-300 hover:border-emerald-400/40"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-white">{template.name}</span>
+                              <span className="text-[10px] uppercase text-gray-500">{template.category}</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <div className="rounded-xl border border-white/10 bg-zinc-950/40 p-4">
+                          <div className="text-xs uppercase tracking-widest text-gray-500">Recentes</div>
+                          <div className="mt-3 space-y-2 text-sm">
+                            {recentTemplates.map((template) => (
+                              <button
+                                key={template.id}
+                                type="button"
+                                onMouseEnter={() => setPreviewTemplate(template)}
+                                onMouseLeave={() => setPreviewTemplate(null)}
+                                onClick={() => {
+                                  setSelectedTemplate(template)
+                                  setTemplateSelected(true)
+                                  setPreviewTemplate(null)
+                                }}
+                                className="w-full rounded-lg border border-white/10 bg-zinc-950/40 px-3 py-2 text-left text-gray-300 hover:border-emerald-400/40"
+                              >
+                                <div className="font-semibold text-white">{template.name}</div>
+                                <div className="mt-1 text-xs text-gray-500">{template.category}</div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-white/10 bg-zinc-950/40 p-4">
+                          <div className="text-xs uppercase tracking-widest text-gray-500">Recomendados</div>
+                          <div className="mt-3 space-y-2 text-sm">
+                            {recommendedTemplates.map((template) => (
+                              <button
+                                key={template.id}
+                                type="button"
+                                onMouseEnter={() => setPreviewTemplate(template)}
+                                onMouseLeave={() => setPreviewTemplate(null)}
+                                onClick={() => {
+                                  setSelectedTemplate(template)
+                                  setTemplateSelected(true)
+                                  setPreviewTemplate(null)
+                                }}
+                                className="w-full rounded-lg border border-white/10 bg-zinc-950/40 px-3 py-2 text-left text-gray-300 hover:border-emerald-400/40"
+                              >
+                                <div className="font-semibold text-white">{template.name}</div>
+                                <div className="mt-1 text-xs text-gray-500">{template.category}</div>
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                       <button
                         type="button"
-                        onClick={() => {
-                          setTemplateSelected(false)
-                          setPreviewTemplate(null)
-                        }}
-                        className="text-xs text-emerald-400/80 hover:text-emerald-300"
+                        onClick={() => setShowAllTemplates(true)}
+                        className="mt-4 text-xs text-emerald-300"
                       >
-                        Trocar
+                        Ver todos os templates
                       </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="space-y-1">
-                      <h2 className="text-lg font-semibold text-white">Template</h2>
-                      <p className="text-sm text-gray-500">Busque e escolha o template da campanha.</p>
-                    </div>
-
-                    <div className="mt-5">
-                      <label className="text-xs uppercase tracking-widest text-gray-500">Buscar template</label>
-                      <input
-                        className="mt-2 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-3 text-sm text-white placeholder:text-gray-600"
-                        placeholder="Digite o nome do template..."
-                        value={templateSearch}
-                        onChange={(event) => setTemplateSearch(event.target.value)}
-                      />
-                      {templatesQuery.isLoading && (
-                        <div className="mt-2 text-xs text-gray-500">Carregando templates...</div>
-                      )}
-                      {templatesQuery.isError && (
-                        <div className="mt-2 text-xs text-amber-300">
-                          Falha ao carregar templates. Verifique as credenciais.
-                        </div>
-                      )}
-                      {!templatesQuery.isLoading && !templatesQuery.isError && templateOptions.length === 0 && (
-                        <div className="mt-2 text-xs text-amber-300">Nenhum template aprovado encontrado.</div>
-                      )}
-                    </div>
-
-                    {showAllTemplates ? (
-                      <div className="mt-5 rounded-2xl border border-white/10 bg-zinc-950/40 p-4">
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs uppercase tracking-widest text-gray-500">Todos os templates</div>
-                          <button
-                            type="button"
-                            onClick={() => setShowAllTemplates(false)}
-                            className="text-xs text-gray-400 hover:text-white"
-                          >
-                            Voltar para recentes
-                          </button>
-                        </div>
-                        <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-2 text-sm">
-                          {filteredTemplates.map((template) => (
-                            <button
-                              key={template.id}
-                              type="button"
-                              onMouseEnter={() => setPreviewTemplate(template)}
-                              onMouseLeave={() => setPreviewTemplate(null)}
-                              onClick={() => {
-                                setSelectedTemplate(template)
-                                setTemplateSelected(true)
-                                setPreviewTemplate(null)
-                              }}
-                              className="w-full rounded-lg border border-white/10 bg-zinc-950/40 px-3 py-2 text-left text-gray-300 hover:border-emerald-400/40"
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="font-semibold text-white">{template.name}</span>
-                                <span className="text-[10px] uppercase text-gray-500">{template.category}</span>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
-                          <div className="rounded-xl border border-white/10 bg-zinc-950/40 p-4">
-                            <div className="text-xs uppercase tracking-widest text-gray-500">Recentes</div>
-                            <div className="mt-3 space-y-2 text-sm">
-                              {recentTemplates.map((template) => (
-                                <button
-                                  key={template.id}
-                                  type="button"
-                                  onMouseEnter={() => setPreviewTemplate(template)}
-                                  onMouseLeave={() => setPreviewTemplate(null)}
-                                  onClick={() => {
-                                    setSelectedTemplate(template)
-                                    setTemplateSelected(true)
-                                    setPreviewTemplate(null)
-                                  }}
-                                  className="w-full rounded-lg border border-white/10 bg-zinc-950/40 px-3 py-2 text-left text-gray-300 hover:border-emerald-400/40"
-                                >
-                                  <div className="font-semibold text-white">{template.name}</div>
-                                  <div className="mt-1 text-xs text-gray-500">{template.category}</div>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-zinc-950/40 p-4">
-                            <div className="text-xs uppercase tracking-widest text-gray-500">Recomendados</div>
-                            <div className="mt-3 space-y-2 text-sm">
-                              {recommendedTemplates.map((template) => (
-                                <button
-                                  key={template.id}
-                                  type="button"
-                                  onMouseEnter={() => setPreviewTemplate(template)}
-                                  onMouseLeave={() => setPreviewTemplate(null)}
-                                  onClick={() => {
-                                    setSelectedTemplate(template)
-                                    setTemplateSelected(true)
-                                    setPreviewTemplate(null)
-                                  }}
-                                  className="w-full rounded-lg border border-white/10 bg-zinc-950/40 px-3 py-2 text-left text-gray-300 hover:border-emerald-400/40"
-                                >
-                                  <div className="font-semibold text-white">{template.name}</div>
-                                  <div className="mt-1 text-xs text-gray-500">{template.category}</div>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setShowAllTemplates(true)}
-                          className="mt-4 text-xs text-emerald-300"
-                        >
-                          Ver todos os templates
-                        </button>
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {templateSelected && (
                 <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-6 shadow-[0_12px_30px_rgba(0,0,0,0.35)]">

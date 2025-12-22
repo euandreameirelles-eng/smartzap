@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
     }
     const receiver = new Receiver({
       currentSigningKey: currentSigningKey || '',
-      nextSigningKey: nextSigningKey || undefined,
+      nextSigningKey: nextSigningKey || '',
     })
     try {
       await receiver.verify({
