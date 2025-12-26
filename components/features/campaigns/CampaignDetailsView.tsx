@@ -964,7 +964,7 @@ export const CampaignDetailsView: React.FC<CampaignDetailsViewProps> = ({
       )}
 
       {/* Debug: Run/Trace view */}
-      <CampaignTracePanel campaignId={campaign.id} />
+      <CampaignTracePanel campaignId={campaign.id} initialTraceId={(perf as any)?.trace_id || null} />
 
       {/* Message Log */}
       <div className="glass-panel rounded-2xl overflow-hidden">

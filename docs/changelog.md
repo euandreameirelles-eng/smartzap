@@ -14,6 +14,7 @@
 - **🖥️ Interface de Debug (Trace View) na tela de campanha**
   - Adicionado painel “Debug • Execuções (Trace)” nos detalhes da campanha para listar `trace_id` e navegar na timeline (`campaign_trace_events`)
   - Endpoints novos: `GET /api/campaigns/:id/trace` e `GET /api/campaigns/:id/trace-events`
+  - O painel agora **auto-seleciona o último run automaticamente** (sem precisar clicar em `trace_id`), com fallback via métricas quando disponível
 
 ## 25/12/2025 - Segurança (Sentinel)
 

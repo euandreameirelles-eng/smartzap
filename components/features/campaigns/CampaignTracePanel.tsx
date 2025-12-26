@@ -42,10 +42,17 @@ function fmtMs(ms: number | null | undefined): string {
   return v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`
 }
 
-export function CampaignTracePanel({ campaignId }: { campaignId: string }) {
+export function CampaignTracePanel({
+  campaignId,
+  initialTraceId,
+}: {
+  campaignId: string
+  initialTraceId?: string | null
+}) {
   const [open, setOpen] = useState(false)
   const [traces, setTraces] = useState<TraceListItem[]>([])
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null)
+  const [showAllTraces, setShowAllTraces] = useState(false)
 
   const [events, setEvents] = useState<TraceEventRow[]>([])
   const [eventsTotal, setEventsTotal] = useState<number | null>(null)
@@ -79,11 +86,18 @@ export function CampaignTracePanel({ campaignId }: { campaignId: string }) {
       const list = Array.isArray(payload?.traces) ? (payload.traces as TraceListItem[]) : []
       setTraces(list)
 
-      // Auto-select: mantém o valor atual se ainda existe; senão pega o mais recente
+      // Auto-select SEMPRE:
+      // - Preferimos o traceId vindo das métricas (quando presente).
+      // - Caso contrário, usamos a execução mais recente retornada pelo endpoint.
+      // - Mantemos a seleção atual apenas se ela ainda existir no conjunto.
       const current = selectedTraceId
-      const exists = current && list.some((t) => t.traceId === current)
-      if (!exists) {
-        setSelectedTraceId(list[0]?.traceId || null)
+      const currentExists = current && list.some((t) => t.traceId === current)
+      const preferred = String(initialTraceId || '').trim()
+      const preferredExists = preferred && list.some((t) => t.traceId === preferred)
+      const next = preferredExists ? preferred : (list[0]?.traceId || null)
+
+      if (!currentExists) {
+        setSelectedTraceId(next)
         setEvents([])
         setEventsOffset(0)
         setEventsTotal(null)
@@ -93,7 +107,7 @@ export function CampaignTracePanel({ campaignId }: { campaignId: string }) {
     } finally {
       setIsLoadingTraces(false)
     }
-  }, [campaignId, selectedTraceId])
+  }, [campaignId, initialTraceId, selectedTraceId])
 
   const loadEvents = useCallback(async (opts?: { reset?: boolean }) => {
     if (!selectedTraceId) return
@@ -154,6 +168,8 @@ export function CampaignTracePanel({ campaignId }: { campaignId: string }) {
     return events.length < eventsTotal
   }, [events.length, eventsTotal])
 
+  const shouldShowTracesList = showAllTraces || traces.length > 1
+
   return (
     <Collapsible
       open={open}
@@ -206,6 +222,17 @@ export function CampaignTracePanel({ campaignId }: { campaignId: string }) {
               />
             </div>
 
+            {traces.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setShowAllTraces((v) => !v)}
+                className="px-3 py-2 bg-zinc-900 border border-white/10 rounded-lg text-gray-300 hover:text-white hover:bg-white/5 transition-colors flex items-center gap-2 text-xs font-medium"
+                title={showAllTraces ? 'Ocultar lista de execuções' : 'Mostrar lista de execuções'}
+              >
+                {showAllTraces ? 'Ocultar execuções' : 'Ver execuções'}
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => void loadTraces()}
@@ -224,7 +251,8 @@ export function CampaignTracePanel({ campaignId }: { campaignId: string }) {
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-            <div className="lg:col-span-1 bg-zinc-900/40 border border-white/10 rounded-xl overflow-hidden">
+            {shouldShowTracesList ? (
+              <div className="lg:col-span-1 bg-zinc-900/40 border border-white/10 rounded-xl overflow-hidden">
               <div className="px-3 py-2 border-b border-white/10 text-xs text-gray-400 flex items-center justify-between">
                 <span>Execuções</span>
                 <span className="font-mono">{filteredTraces.length}</span>
@@ -279,9 +307,10 @@ export function CampaignTracePanel({ campaignId }: { campaignId: string }) {
                   })
                 )}
               </div>
-            </div>
+              </div>
+            ) : null}
 
-            <div className="lg:col-span-2 bg-zinc-900/40 border border-white/10 rounded-xl overflow-hidden">
+            <div className={`${shouldShowTracesList ? 'lg:col-span-2' : 'lg:col-span-3'} bg-zinc-900/40 border border-white/10 rounded-xl overflow-hidden`}>
               <div className="px-3 py-2 border-b border-white/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <div className="text-xs text-gray-400">
                   Timeline{' '}
