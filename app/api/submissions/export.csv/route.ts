@@ -88,7 +88,13 @@ export async function GET(request: NextRequest) {
       const json = row.response_json as Record<string, unknown> | null
 
       const createdAt = new Date(row.created_at)
-      const dateStr = `${createdAt.toLocaleDateString('pt-BR')} ${createdAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+      // Formato BR manual (toLocaleDateString pode não funcionar no servidor)
+      const day = String(createdAt.getDate()).padStart(2, '0')
+      const month = String(createdAt.getMonth() + 1).padStart(2, '0')
+      const year = createdAt.getFullYear()
+      const hours = String(createdAt.getHours()).padStart(2, '0')
+      const minutes = String(createdAt.getMinutes()).padStart(2, '0')
+      const dateStr = `${day}/${month}/${year} ${hours}:${minutes}`
 
       // Extrai valores de forma segura
       const contactName = contact && typeof contact === 'object' && 'name' in contact ? (contact as { name: string | null }).name : null
