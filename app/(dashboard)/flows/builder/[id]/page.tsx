@@ -568,6 +568,12 @@ export default function FlowBuilderEditorPage({
                             fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'endpoint-health',hypothesisId:'H3',location:'app/(dashboard)/flows/builder/[id]/page.tsx:563',message:'endpoint GET check',data:{flowId:id,endpointUrl,status:endpointRes.status,ok:endpointRes.ok},timestamp:Date.now()})}).catch(()=>{});
                             // #endregion agent log
                           }
+
+                          const testRes = await fetch('/api/flows/endpoint/test', { cache: 'no-store' })
+                          const testData = await testRes.json().catch(() => ({}))
+                          // #region agent log
+                          fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'endpoint-health',hypothesisId:'H8',location:'app/(dashboard)/flows/builder/[id]/page.tsx:568',message:'endpoint encrypted ping test',data:{flowId:id,ok:Boolean(testData?.ok),status:testData?.status ?? null,bodyLength:testData?.bodyLength ?? null},timestamp:Date.now()})}).catch(()=>{});
+                          // #endregion agent log
                         } catch (error) {
                           // #region agent log
                           fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'endpoint-health',hypothesisId:'H4',location:'app/(dashboard)/flows/builder/[id]/page.tsx:569',message:'endpoint preflight error',data:{flowId:id,errorMessage:error instanceof Error ? error.message : 'unknown'},timestamp:Date.now()})}).catch(()=>{});
