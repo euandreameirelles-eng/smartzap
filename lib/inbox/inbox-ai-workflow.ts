@@ -166,14 +166,12 @@ export async function processInboxAIWorkflow(context: WorkflowContext) {
 
   console.log(`[inbox-ai-workflow] Processing with AI: agent=${agent.name}, messages=${messages.length}`)
 
-  // Monta a URL do endpoint interno
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL
-  console.log(`[inbox-ai-workflow] DEBUG - baseUrl=${baseUrl}, NEXT_PUBLIC_APP_URL=${process.env.NEXT_PUBLIC_APP_URL}, VERCEL_URL=${process.env.VERCEL_URL}`)
+  // Monta a URL do endpoint interno - com fallback hardcoded para produção
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+    || process.env.VERCEL_URL
+    || 'https://smartzapv3.vercel.app' // Fallback para produção
 
-  if (!baseUrl) {
-    console.error('[inbox-ai-workflow] NEXT_PUBLIC_APP_URL not configured')
-    return { status: 'error', error: 'APP_URL not configured' }
-  }
+  console.log(`[inbox-ai-workflow] DEBUG - baseUrl=${baseUrl}, NEXT_PUBLIC_APP_URL=${process.env.NEXT_PUBLIC_APP_URL}, VERCEL_URL=${process.env.VERCEL_URL}`)
 
   const aiEndpointUrl = baseUrl.startsWith('http')
     ? `${baseUrl}/api/internal/ai-generate`
@@ -181,7 +179,11 @@ export async function processInboxAIWorkflow(context: WorkflowContext) {
 
   const apiKey = process.env.SMARTZAP_API_KEY
   if (!apiKey) {
-    console.error('[inbox-ai-workflow] SMARTZAP_API_KEY not configured')
+    // Registra o erro como um step para visibilidade no dashboard
+    await context.run('error-missing-api-key', async () => {
+      console.error('[inbox-ai-workflow] SMARTZAP_API_KEY not configured')
+      return { error: 'SMARTZAP_API_KEY not configured' }
+    })
     return { status: 'error', error: 'API_KEY not configured' }
   }
 
