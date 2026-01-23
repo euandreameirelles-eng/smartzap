@@ -11,19 +11,17 @@ import { normalizePhoneNumber } from '@/lib/phone-formatter'
 import { inboxDb, isHumanModeExpired, switchToBotMode } from './inbox-db'
 import { cancelDebounce } from '@/lib/ai/agents/chat-agent'
 import { sendWhatsAppMessage } from '@/lib/whatsapp-send'
-import { getRedis, REDIS_KEYS } from '@/lib/upstash/redis'
-import { Client } from '@upstash/workflow'
-import type { InboxAIWorkflowPayload } from './inbox-ai-workflow'
+import { Client } from '@upstash/qstash'
 import type {
   InboxConversation,
   InboxMessage,
 } from '@/types'
 
-// Workflow client para disparar processamento de IA
-const getWorkflowClient = () => {
+// QStash client para disparar processamento de IA (simplificado)
+const getQStashClient = () => {
   const token = process.env.QSTASH_TOKEN
   if (!token) {
-    console.warn('[Inbox] QSTASH_TOKEN não configurado, workflow não disponível')
+    console.warn('[Inbox] QSTASH_TOKEN não configurado, AI processing não disponível')
     return null
   }
   return new Client({ token })
@@ -149,97 +147,55 @@ export async function handleInboundMessage(
 }
 
 // =============================================================================
-// AI Processing Trigger (T047) - Via Upstash Workflow
+// AI Processing Trigger (T047) - Via QStash (Simplificado)
 // =============================================================================
 
 /**
- * Trigger AI agent processing via durable workflow
+ * Trigger AI agent processing via QStash
  *
- * Usa Upstash Workflow ao invés de setTimeout para debounce durável.
- * O workflow sobrevive à morte da função serverless.
+ * Versão simplificada: dispara diretamente para /api/ai/respond
+ * Sem workflow durável, sem Redis, sem complexidade.
  *
- * Fluxo:
- * 1. Atualiza timestamp da última mensagem no Redis
- * 2. Se não existe workflow pendente, dispara novo workflow
- * 3. Se existe, o workflow em execução vai detectar a nova mensagem
+ * O endpoint /api/ai/respond tem maxDuration=300 (5 min) via Fluid Compute,
+ * suficiente para processar qualquer resposta de IA.
  */
 async function triggerAIProcessing(
   conversation: InboxConversation,
-  message: InboxMessage
+  _message: InboxMessage
 ): Promise<boolean> {
   const conversationId = conversation.id
-  console.log(`🔥 [TRIGGER] Starting triggerAIProcessing for ${conversationId}`)
+  console.log(`🔥 [TRIGGER] Starting AI processing for ${conversationId}`)
 
-  const redis = getRedis()
-  const workflowClient = getWorkflowClient()
+  const qstash = getQStashClient()
 
-  console.log(`🔥 [TRIGGER] Redis available: ${!!redis}, WorkflowClient available: ${!!workflowClient}`)
-
-  // Verifica se temos os clientes necessários
-  if (!workflowClient) {
-    console.log('[Inbox] Workflow client not available, skipping AI processing')
+  if (!qstash) {
+    console.log('[Inbox] QStash client not available, skipping AI processing')
     return false
   }
 
-  // Atualiza timestamp da última mensagem (para debounce distribuído)
-  if (redis) {
-    const timestamp = Date.now().toString()
-    await redis.set(REDIS_KEYS.inboxLastMessage(conversationId), timestamp)
-    console.log(`🔥 [TRIGGER] Set last message timestamp: ${timestamp}`)
-  }
+  // URL do endpoint simplificado
+  const baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL &&
+      `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`) ||
+    (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}`) ||
+    'http://localhost:3000'
 
-  // Verifica se já existe workflow pendente para esta conversa
-  if (redis) {
-    const pendingWorkflow = await redis.get(REDIS_KEYS.inboxWorkflowPending(conversationId))
-    console.log(`🔥 [TRIGGER] Pending workflow check: ${pendingWorkflow}`)
+  const aiRespondUrl = `${baseUrl}/api/ai/respond`
 
-    if (pendingWorkflow) {
-      // Workflow já existe, só atualizamos o timestamp (ele vai buscar msgs novas)
-      console.log(
-        `[Inbox] Workflow already pending for ${conversationId}, updated last message timestamp`
-      )
-      return true
-    }
-
-    // Marca workflow como pendente (TTL de 5 min para safety)
-    await redis.set(REDIS_KEYS.inboxWorkflowPending(conversationId), 'true', { ex: 300 })
-    console.log(`🔥 [TRIGGER] Set workflow pending flag`)
-  }
-
-  // Dispara novo workflow
-  // Prioridade: NEXT_PUBLIC_APP_URL (manual) > VERCEL_PROJECT_PRODUCTION_URL > VERCEL_URL > localhost
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL
-    || (process.env.VERCEL_PROJECT_PRODUCTION_URL && `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`)
-    || (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}`)
-    || 'http://localhost:3000'
-
-  const workflowUrl = `${baseUrl}/api/inbox/ai-workflow`
-
-  console.log(`🔥 [TRIGGER] Triggering AI workflow for ${conversationId} at ${workflowUrl}`)
+  console.log(`🔥 [TRIGGER] Dispatching to ${aiRespondUrl}`)
 
   try {
-    const payload: InboxAIWorkflowPayload = {
-      conversationId,
-      triggeredAt: Date.now(),
-    }
-
-    console.log(`🔥 [TRIGGER] Calling workflowClient.trigger with payload:`, JSON.stringify(payload))
-
-    await workflowClient.trigger({
-      url: workflowUrl,
-      body: payload,
+    await qstash.publishJSON({
+      url: aiRespondUrl,
+      body: { conversationId },
+      retries: 2,
     })
 
-    console.log(`✅ [TRIGGER] AI workflow triggered successfully for ${conversationId}`)
+    console.log(`✅ [TRIGGER] AI processing dispatched for ${conversationId}`)
     return true
   } catch (error) {
-    console.error('❌ [TRIGGER] Failed to trigger AI workflow:', error)
-
-    // Limpa flag de pendente em caso de erro
-    if (redis) {
-      await redis.del(REDIS_KEYS.inboxWorkflowPending(conversationId))
-    }
-
+    console.error('❌ [TRIGGER] Failed to dispatch AI processing:', error)
     return false
   }
 }

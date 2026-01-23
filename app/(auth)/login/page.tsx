@@ -46,7 +46,7 @@ function LoginForm() {
             return
           }
 
-          router.push('/install/start')
+          router.push('/install')
         } else if (!data.isSetup) {
           // Instalação incompleta - redireciona para o wizard
           router.push('/install/wizard')

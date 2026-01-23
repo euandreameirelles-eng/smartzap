@@ -92,7 +92,7 @@ export async function proxy(request: NextRequest) {
     // If not configured and not already on install, redirect immediately
     if (!hasMasterPassword) {
         if (!pathname.startsWith('/install') && !pathname.startsWith('/api')) {
-            const installUrl = new URL('/install/start', request.url)
+            const installUrl = new URL('/install', request.url)
             return NextResponse.redirect(installUrl)
         }
     }

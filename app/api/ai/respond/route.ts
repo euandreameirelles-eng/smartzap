@@ -1,0 +1,282 @@
+/**
+ * AI Respond Endpoint - Versão Simplificada
+ *
+ * Endpoint único que processa mensagens do inbox com IA.
+ * Substitui a arquitetura complexa de workflow durável por um fluxo direto.
+ *
+ * Fluxo:
+ * 1. Webhook recebe mensagem → dispara via QStash.publish()
+ * 2. Este endpoint: busca dados → processa IA → envia WhatsApp
+ *
+ * Usa Fluid Compute com maxDuration=300 (5 minutos) - suficiente para 99% dos casos.
+ */
+
+import { NextRequest, NextResponse } from 'next/server'
+import { inboxDb } from '@/lib/inbox/inbox-db'
+import { processChatAgent } from '@/lib/ai/agents/chat-agent'
+import { sendWhatsAppMessage } from '@/lib/whatsapp-send'
+import { getSupabaseAdmin } from '@/lib/supabase'
+import type { AIAgent } from '@/types'
+
+// Fluid Compute: 5 minutos de timeout (suficiente para IA)
+export const maxDuration = 300
+
+// Desabilita cache
+export const dynamic = 'force-dynamic'
+
+// =============================================================================
+// Types
+// =============================================================================
+
+interface AIRespondRequest {
+  conversationId: string
+}
+
+// =============================================================================
+// POST Handler
+// =============================================================================
+
+export async function POST(req: NextRequest) {
+  const startTime = Date.now()
+
+  console.log(`🤖 [AI-RESPOND] ========================================`)
+  console.log(`🤖 [AI-RESPOND] Request received at ${new Date().toISOString()}`)
+
+  try {
+    // 1. Parse request
+    const body = (await req.json()) as AIRespondRequest
+    const { conversationId } = body
+
+    if (!conversationId) {
+      console.log(`❌ [AI-RESPOND] Missing conversationId`)
+      return NextResponse.json({ error: 'Missing conversationId' }, { status: 400 })
+    }
+
+    console.log(`🤖 [AI-RESPOND] Processing conversation: ${conversationId}`)
+
+    // 2. Busca conversa
+    const conversation = await inboxDb.getConversation(conversationId)
+
+    if (!conversation) {
+      console.log(`❌ [AI-RESPOND] Conversation not found: ${conversationId}`)
+      return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
+    }
+
+    // 3. Verifica se está em modo bot
+    if (conversation.mode !== 'bot') {
+      console.log(`⏭️ [AI-RESPOND] Skipping - mode is "${conversation.mode}", not "bot"`)
+      return NextResponse.json({ skipped: true, reason: 'not-in-bot-mode' })
+    }
+
+    // 4. Verifica se automação está pausada
+    if (conversation.automation_paused_until) {
+      const pauseTime = new Date(conversation.automation_paused_until).getTime()
+      if (pauseTime > Date.now()) {
+        console.log(`⏭️ [AI-RESPOND] Skipping - automation paused until ${conversation.automation_paused_until}`)
+        return NextResponse.json({ skipped: true, reason: 'automation-paused' })
+      }
+    }
+
+    // 5. Busca agente
+    const agent = await getAgentForConversation(conversation.ai_agent_id)
+
+    if (!agent) {
+      console.log(`❌ [AI-RESPOND] No agent configured`)
+      return NextResponse.json({ error: 'No agent configured' }, { status: 400 })
+    }
+
+    if (!agent.is_active) {
+      console.log(`⏭️ [AI-RESPOND] Skipping - agent "${agent.name}" is not active`)
+      return NextResponse.json({ skipped: true, reason: 'agent-not-active' })
+    }
+
+    console.log(`🤖 [AI-RESPOND] Using agent: ${agent.name} (${agent.model})`)
+
+    // 6. Busca mensagens recentes
+    const { messages } = await inboxDb.listMessages(conversationId, { limit: 20 })
+    console.log(`🤖 [AI-RESPOND] Found ${messages.length} messages`)
+
+    if (messages.length === 0) {
+      console.log(`⏭️ [AI-RESPOND] Skipping - no messages found`)
+      return NextResponse.json({ skipped: true, reason: 'no-messages' })
+    }
+
+    // 7. Processa com IA
+    console.log(`🚀 [AI-RESPOND] Calling processChatAgent...`)
+
+    const result = await processChatAgent({
+      agent,
+      conversation,
+      messages,
+    })
+
+    console.log(`✅ [AI-RESPOND] AI result: success=${result.success}, latency=${result.latencyMs}ms`)
+
+    // 8. Trata erro da IA
+    if (!result.success || !result.response?.message) {
+      console.log(`❌ [AI-RESPOND] AI failed: ${result.error}`)
+
+      // Auto-handoff em caso de erro
+      await handleAutoHandoff(conversationId, conversation.phone, result.error || 'AI processing failed')
+
+      return NextResponse.json({
+        success: false,
+        error: result.error || 'Empty response',
+        handedOff: true,
+      })
+    }
+
+    // 9. Envia resposta via WhatsApp
+    console.log(`📤 [AI-RESPOND] Sending WhatsApp message to ${conversation.phone}...`)
+
+    const sendResult = await sendWhatsAppMessage({
+      to: conversation.phone,
+      type: 'text',
+      text: result.response.message,
+    })
+
+    if (sendResult.success && sendResult.messageId) {
+      // Salva mensagem no banco
+      await inboxDb.createMessage({
+        conversation_id: conversationId,
+        direction: 'outbound',
+        content: result.response.message,
+        message_type: 'text',
+        whatsapp_message_id: sendResult.messageId,
+        delivery_status: 'sent',
+        ai_response_id: result.logId || null,
+        ai_sentiment: result.response.sentiment,
+        ai_sources: result.response.sources || null,
+      })
+
+      console.log(`✅ [AI-RESPOND] Message sent and saved: ${sendResult.messageId}`)
+    } else {
+      console.error(`❌ [AI-RESPOND] Failed to send WhatsApp message:`, sendResult.error)
+    }
+
+    // 10. Handoff se necessário
+    if (result.response.shouldHandoff) {
+      console.log(`🔄 [AI-RESPOND] Processing handoff request...`)
+
+      await inboxDb.updateConversation(conversationId, { mode: 'human' })
+
+      await inboxDb.createMessage({
+        conversation_id: conversationId,
+        direction: 'outbound',
+        content: `🤖 **Transferência para atendente**\n\n${result.response.handoffReason ? `**Motivo:** ${result.response.handoffReason}\n` : ''}${result.response.handoffSummary ? `**Resumo:** ${result.response.handoffSummary}` : ''}`,
+        message_type: 'internal_note',
+        delivery_status: 'delivered',
+        payload: {
+          type: 'ai_handoff',
+          reason: result.response.handoffReason,
+          summary: result.response.handoffSummary,
+          timestamp: new Date().toISOString(),
+        },
+      })
+
+      console.log(`✅ [AI-RESPOND] Handoff completed`)
+    }
+
+    const elapsed = Date.now() - startTime
+
+    console.log(`🎉 [AI-RESPOND] ========================================`)
+    console.log(`🎉 [AI-RESPOND] COMPLETED in ${elapsed}ms`)
+    console.log(`🎉 [AI-RESPOND] Sentiment: ${result.response.sentiment}`)
+    console.log(`🎉 [AI-RESPOND] Handoff: ${result.response.shouldHandoff}`)
+    console.log(`🎉 [AI-RESPOND] ========================================`)
+
+    return NextResponse.json({
+      success: true,
+      conversationId,
+      sentiment: result.response.sentiment,
+      handoff: result.response.shouldHandoff,
+      latencyMs: elapsed,
+    })
+  } catch (error) {
+    const elapsed = Date.now() - startTime
+
+    console.error(`💥 [AI-RESPOND] ========================================`)
+    console.error(`💥 [AI-RESPOND] EXCEPTION after ${elapsed}ms`)
+    console.error(`💥 [AI-RESPOND] Error:`, error)
+    console.error(`💥 [AI-RESPOND] ========================================`)
+
+    return NextResponse.json(
+      { success: false, error: error instanceof Error ? error.message : 'Internal error' },
+      { status: 500 }
+    )
+  }
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Busca o agente de IA para uma conversa
+ * Prioridade: agente específico da conversa → agente padrão
+ */
+async function getAgentForConversation(agentId: string | null): Promise<AIAgent | null> {
+  const supabase = getSupabaseAdmin()
+  if (!supabase) return null
+
+  // Tenta agente específico
+  if (agentId) {
+    const { data } = await supabase.from('ai_agents').select('*').eq('id', agentId).single()
+    if (data) return data as AIAgent
+  }
+
+  // Fallback para agente padrão
+  const { data } = await supabase
+    .from('ai_agents')
+    .select('*')
+    .eq('is_active', true)
+    .eq('is_default', true)
+    .single()
+
+  return (data as AIAgent) || null
+}
+
+/**
+ * Auto-handoff em caso de erro
+ * Envia mensagem de fallback e transfere para humano
+ */
+async function handleAutoHandoff(
+  conversationId: string,
+  phone: string,
+  errorMessage: string
+): Promise<void> {
+  console.log(`🚨 [AI-RESPOND] Auto-handoff due to error: ${errorMessage}`)
+
+  const fallbackMessage =
+    'Desculpe, estou com dificuldades técnicas. Vou transferir você para um atendente.'
+
+  // Envia mensagem de fallback
+  const sendResult = await sendWhatsAppMessage({
+    to: phone,
+    type: 'text',
+    text: fallbackMessage,
+  })
+
+  if (sendResult.success && sendResult.messageId) {
+    await inboxDb.createMessage({
+      conversation_id: conversationId,
+      direction: 'outbound',
+      content: fallbackMessage,
+      message_type: 'text',
+      whatsapp_message_id: sendResult.messageId,
+      delivery_status: 'sent',
+    })
+  }
+
+  // Muda para modo humano
+  await inboxDb.updateConversation(conversationId, { mode: 'human' })
+
+  // Cria nota interna
+  await inboxDb.createMessage({
+    conversation_id: conversationId,
+    direction: 'outbound',
+    content: `🤖 **Transferência automática**\n\n**Motivo:** Erro técnico: ${errorMessage}`,
+    message_type: 'internal_note',
+    delivery_status: 'delivered',
+  })
+}

@@ -55,7 +55,7 @@ export const OnboardingOverlay = ({
                     : 'pending',
             icon: React.createElement(Database, { size: 20, className: 'text-emerald-600 dark:text-emerald-400' }),
             actionLabel: 'Abrir Assistente de Configuração',
-            actionUrl: '/install/start',
+            actionUrl: '/install',
             errorMessage: health?.services.database?.message,
             isRequired: true,
             instructions: [
@@ -76,7 +76,7 @@ export const OnboardingOverlay = ({
                     : 'pending',
             icon: React.createElement(Zap, { size: 20, className: 'text-purple-600 dark:text-purple-400' }),
             actionLabel: 'Configurar no Assistente',
-            actionUrl: '/install/start',
+            actionUrl: '/install',
             errorMessage: health?.services.qstash.message,
             isRequired: true,
             instructions: [
@@ -98,7 +98,7 @@ export const OnboardingOverlay = ({
             errorMessage: health?.services.whatsapp.message,
             isRequired: true,
             actionLabel: 'Configurar WhatsApp',
-            actionUrl: '/install/start',
+            actionUrl: '/install',
             instructions: [
                 'Configure as credenciais do WhatsApp Business.',
                 'Use o assistente para validar o token.',
@@ -128,7 +128,7 @@ export const OnboardingOverlay = ({
                         Para utilizar o sistema, precisamos configurar os serviços essenciais. Utilize nosso assistente para facilitar o processo.
                     </p>
                     <a
-                        href="/install/start"
+                        href="/install"
                         className="inline-flex items-center gap-2 bg-primary-600 hover:bg-primary-500 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-lg hover:shadow-primary-500/25"
                     >
                         <Sparkles size={18} />
