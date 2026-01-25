@@ -184,11 +184,14 @@ export function ManualTemplateBuilder({
   // ============================================================================
   // Media Upload Functions
   // ============================================================================
+  // Limite máximo do Vercel Serverless é ~4.5MB para request body
+  const VERCEL_SERVERLESS_LIMIT = 4_500_000
+
   const headerMediaMaxBytes = (format: HeaderFormat): number => {
     if (format === 'GIF') return 3_500_000
-    if (format === 'IMAGE') return 5 * 1024 * 1024
-    if (format === 'VIDEO') return 16 * 1024 * 1024
-    if (format === 'DOCUMENT') return 20 * 1024 * 1024
+    if (format === 'IMAGE') return Math.min(5_000_000, VERCEL_SERVERLESS_LIMIT)
+    if (format === 'VIDEO') return VERCEL_SERVERLESS_LIMIT // Meta permite 16MB, mas Vercel limita a 4.5MB
+    if (format === 'DOCUMENT') return VERCEL_SERVERLESS_LIMIT // Meta permite 20MB, mas Vercel limita a 4.5MB
     return 0
   }
 
@@ -212,7 +215,13 @@ export function ManualTemplateBuilder({
     const max = headerMediaMaxBytes(format)
     if (max > 0 && file.size > max) {
       const mb = (max / 1_000_000).toFixed(1)
-      setUploadHeaderMediaError(`Arquivo muito grande para ${format}. Limite: ${mb}MB.`)
+      const fileMb = (file.size / 1_000_000).toFixed(1)
+      const isPlatformLimit = max === VERCEL_SERVERLESS_LIMIT
+      setUploadHeaderMediaError(
+        isPlatformLimit
+          ? `Arquivo muito grande (${fileMb}MB). Limite da plataforma: ${mb}MB. Comprima o ${format === 'VIDEO' ? 'vídeo' : 'arquivo'} antes de enviar.`
+          : `Arquivo muito grande para ${format}. Limite: ${mb}MB.`
+      )
       return
     }
 

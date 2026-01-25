@@ -24,11 +24,15 @@ type GraphErrorBody = {
   }
 }
 
+// Limite máximo do Vercel Serverless é ~4.5MB para request body
+// Aplicamos 4.5MB para VIDEO e DOCUMENT que excedem esse limite
+const VERCEL_SERVERLESS_LIMIT = 4_500_000
+
 function maxBytesFor(format: UploadFormat): number {
   if (format === 'GIF') return 3_500_000
-  if (format === 'IMAGE') return 5_000_000
-  if (format === 'VIDEO') return 16_000_000
-  if (format === 'DOCUMENT') return 20_000_000
+  if (format === 'IMAGE') return Math.min(5_000_000, VERCEL_SERVERLESS_LIMIT)
+  if (format === 'VIDEO') return VERCEL_SERVERLESS_LIMIT // Meta permite 16MB, mas Vercel limita a 4.5MB
+  if (format === 'DOCUMENT') return VERCEL_SERVERLESS_LIMIT // Meta permite 20MB, mas Vercel limita a 4.5MB
   return 0
 }
 
@@ -113,9 +117,9 @@ export async function POST(request: NextRequest) {
       const formErrMsg = formErr instanceof Error ? formErr.message : String(formErr)
       console.error('[template-header] FormData parse error:', formErrMsg)
 
-      if (formErrMsg.includes('body exceeded') || formErrMsg.includes('too large') || formErrMsg.includes('limit')) {
+      if (formErrMsg.includes('body exceeded') || formErrMsg.includes('too large') || formErrMsg.includes('limit') || formErrMsg.includes('PAYLOAD')) {
         return jsonNoStore(
-          { error: 'Arquivo muito grande. O limite máximo é de aproximadamente 4MB para uploads via API.' },
+          { error: 'Arquivo muito grande. O limite máximo é 4.5MB para uploads. Comprima o arquivo antes de enviar.' },
           { status: 413 }
         )
       }
@@ -143,8 +147,14 @@ export async function POST(request: NextRequest) {
     const max = maxBytesFor(format)
     if (max > 0 && file.size > max) {
       const mb = (max / 1_000_000).toFixed(1)
+      const fileMb = (file.size / 1_000_000).toFixed(1)
+      const isPlatformLimit = max === VERCEL_SERVERLESS_LIMIT
       return jsonNoStore(
-        { error: `Arquivo muito grande para ${format}. Limite: ${mb}MB.` },
+        {
+          error: isPlatformLimit
+            ? `Arquivo muito grande (${fileMb}MB). Limite da plataforma: ${mb}MB. Comprima o ${format === 'VIDEO' ? 'vídeo' : 'arquivo'} antes de enviar.`
+            : `Arquivo muito grande para ${format}. Limite: ${mb}MB.`,
+        },
         { status: 400 }
       )
     }

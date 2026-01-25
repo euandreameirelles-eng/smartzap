@@ -679,6 +679,22 @@ export function StepContent({
                 </div>
               </div>
 
+              {/* Aviso de limite de tamanho */}
+              <p className="text-xs text-[var(--ds-text-muted)]">
+                {headerType === 'VIDEO' && (
+                  <>Máximo: <span className="font-medium text-amber-400/80">4.5MB</span> (limite da plataforma). Formato: MP4 (H.264 + AAC).</>
+                )}
+                {headerType === 'IMAGE' && (
+                  <>Máximo: <span className="font-medium">5MB</span>. Formatos: PNG, JPEG.</>
+                )}
+                {headerType === 'DOCUMENT' && (
+                  <>Máximo: <span className="font-medium text-amber-400/80">4.5MB</span> (limite da plataforma). Formato: PDF.</>
+                )}
+                {headerType === 'GIF' && (
+                  <>Máximo: <span className="font-medium">3.5MB</span>. Formato: MP4 (como GIF animado).</>
+                )}
+              </p>
+
               {uploadHeaderMediaError ? (
                 <div className="text-xs text-amber-700 dark:text-amber-300 space-y-1">
                   <p>{uploadHeaderMediaError}</p>

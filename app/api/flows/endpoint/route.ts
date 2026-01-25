@@ -28,6 +28,10 @@ import { metaSetEncryptionPublicKey } from '@/lib/meta-flows-api'
 
 const PRIVATE_KEY_SETTING = 'whatsapp_flow_private_key'
 const PUBLIC_KEY_SETTING = 'whatsapp_flow_public_key'
+const LAST_KEY_REGEN_SETTING = 'whatsapp_flow_last_key_regen'
+
+// Cooldown de 10 minutos entre regenerações de chave
+const KEY_REGEN_COOLDOWN_MS = 10 * 60 * 1000
 
 export async function POST(request: NextRequest) {
   try {
@@ -91,34 +95,47 @@ export async function POST(request: NextRequest) {
       console.error('[flow-endpoint] ❌ Erro ao descriptografar:', error)
 
       if (isOaepError) {
-        console.log('[flow-endpoint] 🔑 OAEP Error detectado! Iniciando auto-recuperação...')
+        // Verifica cooldown para evitar regenerar chaves em loop
+        const lastRegenStr = await settingsDb.get(LAST_KEY_REGEN_SETTING)
+        const lastRegen = lastRegenStr ? parseInt(lastRegenStr, 10) : 0
+        const now = Date.now()
+        const timeSinceLastRegen = now - lastRegen
 
-        // Auto-recuperação: regenera chaves e sincroniza com Meta
-        try {
-          const { publicKey: newPublicKey, privateKey: newPrivateKey } = generateKeyPair()
+        if (timeSinceLastRegen < KEY_REGEN_COOLDOWN_MS) {
+          const remainingMinutes = Math.ceil((KEY_REGEN_COOLDOWN_MS - timeSinceLastRegen) / 60000)
+          console.log(`[flow-endpoint] ⏳ OAEP Error, mas cooldown ativo. Aguarde ${remainingMinutes}min para nova tentativa de regeneração.`)
+          console.log('[flow-endpoint] 💡 A Meta pode demorar alguns minutos para propagar a nova chave.')
+        } else {
+          console.log('[flow-endpoint] 🔑 OAEP Error detectado! Iniciando auto-recuperação...')
 
-          await Promise.all([
-            settingsDb.set(PRIVATE_KEY_SETTING, newPrivateKey),
-            settingsDb.set(PUBLIC_KEY_SETTING, newPublicKey),
-          ])
+          // Auto-recuperação: regenera chaves e sincroniza com Meta
+          try {
+            const { publicKey: newPublicKey, privateKey: newPrivateKey } = generateKeyPair()
 
-          console.log('[flow-endpoint] ✅ Novas chaves RSA geradas')
+            await Promise.all([
+              settingsDb.set(PRIVATE_KEY_SETTING, newPrivateKey),
+              settingsDb.set(PUBLIC_KEY_SETTING, newPublicKey),
+              settingsDb.set(LAST_KEY_REGEN_SETTING, String(now)),
+            ])
 
-          // Sincroniza com a Meta
-          const credentials = await getWhatsAppCredentials()
-          if (credentials?.accessToken && credentials?.phoneNumberId) {
-            await metaSetEncryptionPublicKey({
-              accessToken: credentials.accessToken,
-              phoneNumberId: credentials.phoneNumberId,
-              publicKey: newPublicKey,
-            })
-            console.log('[flow-endpoint] ✅ Nova chave pública sincronizada com a Meta')
-            console.log('[flow-endpoint] 💡 As próximas requests devem funcionar automaticamente')
-          } else {
-            console.error('[flow-endpoint] ⚠️ Credenciais WhatsApp não configuradas, sincronização falhou')
+            console.log('[flow-endpoint] ✅ Novas chaves RSA geradas')
+
+            // Sincroniza com a Meta
+            const credentials = await getWhatsAppCredentials()
+            if (credentials?.accessToken && credentials?.phoneNumberId) {
+              await metaSetEncryptionPublicKey({
+                accessToken: credentials.accessToken,
+                phoneNumberId: credentials.phoneNumberId,
+                publicKey: newPublicKey,
+              })
+              console.log('[flow-endpoint] ✅ Nova chave pública sincronizada com a Meta')
+              console.log('[flow-endpoint] 💡 A Meta pode levar até 5-10min para propagar a nova chave')
+            } else {
+              console.error('[flow-endpoint] ⚠️ Credenciais WhatsApp não configuradas, sincronização falhou')
+            }
+          } catch (recoveryError) {
+            console.error('[flow-endpoint] ❌ Falha na auto-recuperação:', recoveryError)
           }
-        } catch (recoveryError) {
-          console.error('[flow-endpoint] ❌ Falha na auto-recuperação:', recoveryError)
         }
       }
 
