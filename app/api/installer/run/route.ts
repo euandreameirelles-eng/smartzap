@@ -191,6 +191,9 @@ export async function POST(req: Request) {
       // Auth
       { key: 'MASTER_PASSWORD', value: admin.passwordHash, targets: envTargets },
 
+      // API Key para acesso programático
+      { key: 'SMARTZAP_API_KEY', value: `szap_${crypto.randomUUID().replace(/-/g, '')}`, targets: envTargets },
+
       // Setup flag (para isSetupComplete() retornar true em produção)
       { key: 'SETUP_COMPLETE', value: 'true', targets: envTargets },
     ];
