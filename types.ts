@@ -70,16 +70,7 @@ export interface TemplateButton {
     | 'PHONE_NUMBER'
     | 'COPY_CODE'
     | 'OTP'
-    | 'FLOW'
-    | 'CATALOG'
-    | 'MPM'
-    | 'VOICE_CALL'
-    | 'EXTENSION'
-    | 'ORDER_DETAILS'
-    | 'POSTBACK'
-    | 'REMINDER'
-    | 'SEND_LOCATION'
-    | 'SPM';
+    | 'FLOW';
   text: string;
   url?: string;
   phone_number?: string;

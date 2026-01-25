@@ -53,26 +53,27 @@ const TemplateTableRowComponent: React.FC<TemplateTableRowProps> = ({
 }) => {
   const draftHref = `/templates/drafts/${encodeURIComponent(template.id)}`;
 
-  const handleRowEnter = () => {
-    onMouseEnter();
-    if (!isManualDraft && onPrefetchPreview) {
-      onPrefetchPreview();
-    }
-  };
-
   const handleCellClick = () => {
     if (!isManualDraft) {
       onViewDetails();
     }
   };
 
+  // Handler para hover no ícone de preview (Eye)
+  const handlePreviewEnter = () => {
+    onMouseEnter();
+    if (!isManualDraft && onPrefetchPreview) {
+      onPrefetchPreview();
+    }
+  };
+
   return (
     <tr
-      onMouseEnter={handleRowEnter}
-      onMouseLeave={onMouseLeave}
       className={`hover:bg-[var(--ds-bg-hover)] transition-colors group cursor-pointer ${
         isRowSelected ? (isManualDraft ? 'bg-amber-500/5' : 'bg-emerald-500/5') : ''
       }`}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       {/* Checkbox */}
       <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>

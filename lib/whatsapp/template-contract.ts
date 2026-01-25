@@ -489,25 +489,8 @@ function mapButtonSubType(buttonType?: TemplateButton['type']): string | null {
       return 'otp'
     case 'FLOW':
       return 'flow'
-    case 'CATALOG':
-      return 'catalog'
-    case 'MPM':
-      return 'mpm'
-    case 'VOICE_CALL':
-      return 'voice_call'
-    case 'ORDER_DETAILS':
-      return 'order_details'
-    case 'SPM':
-      return 'spm'
-    case 'SEND_LOCATION':
-      return 'send_location'
-    case 'REMINDER':
-      return 'reminder'
-    case 'POSTBACK':
-      return 'postback'
-    case 'EXTENSION':
-      return 'extension'
     default:
+      // Tipos não suportados pela Meta API para templates
       return null
   }
 }

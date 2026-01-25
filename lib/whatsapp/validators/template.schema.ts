@@ -79,82 +79,11 @@ export const FlowButtonSchema = z.object({
     navigate_screen: z.string().optional(),
 });
 
-// 7. Catalog Button - Ver catálogo
-/** Schema Zod para botão do tipo CATALOG (abrir catálogo). */
-export const CatalogButtonSchema = z.object({
-    type: z.literal('CATALOG'),
-    text: z.string().min(1).max(25).default('Ver catálogo'),
-});
+// Nota: Tipos como CATALOG, MPM, VOICE_CALL, EXTENSION, ORDER_DETAILS, POSTBACK,
+// REMINDER, SEND_LOCATION, SPM NÃO são suportados pela Meta API para templates
+// de mensagem e foram removidos.
 
-// 8. MPM Button - Multi-Product Message
-/** Schema Zod para botão do tipo MPM (multi-produto). */
-export const MpmButtonSchema = z.object({
-    type: z.literal('MPM'),
-    text: z.string().min(1).max(25).default('Ver produtos'),
-});
-
-// 9. Voice Call Button - Chamada de voz
-/** Schema Zod para botão do tipo VOICE_CALL (chamada de voz). */
-export const VoiceCallButtonSchema = z.object({
-    type: z.literal('VOICE_CALL'),
-    text: z.string().min(1).max(25, 'Botão: máximo 25 caracteres'),
-});
-
-// 10. Extension Button - Tipos adicionais documentados
-/** Schema Zod para botão do tipo EXTENSION. */
-export const ExtensionButtonSchema = z.object({
-    type: z.literal('EXTENSION'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// 11. Order Details Button
-/** Schema Zod para botão do tipo ORDER_DETAILS. */
-export const OrderDetailsButtonSchema = z.object({
-    type: z.literal('ORDER_DETAILS'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// 12. Postback Button
-/** Schema Zod para botão do tipo POSTBACK. */
-export const PostbackButtonSchema = z.object({
-    type: z.literal('POSTBACK'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// 13. Reminder Button
-/** Schema Zod para botão do tipo REMINDER. */
-export const ReminderButtonSchema = z.object({
-    type: z.literal('REMINDER'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// 14. Send Location Button
-/** Schema Zod para botão do tipo SEND_LOCATION. */
-export const SendLocationButtonSchema = z.object({
-    type: z.literal('SEND_LOCATION'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// 15. Single Product Message Button
-/** Schema Zod para botão do tipo SPM. */
-export const SpmButtonSchema = z.object({
-    type: z.literal('SPM'),
-    text: z.string().max(25).optional(),
-    payload: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-    action: z.record(z.string(), z.unknown()).optional(),
-});
-
-// Union de todos os tipos de botão
+// Union de todos os tipos de botão suportados pela Meta
 /**
  * Union discriminada (`type`) de todos os tipos de botões suportados.
  *
@@ -167,15 +96,6 @@ export const ButtonSchema = z.discriminatedUnion('type', [
     CopyCodeButtonSchema,
     OtpButtonSchema,
     FlowButtonSchema,
-    CatalogButtonSchema,
-    MpmButtonSchema,
-    VoiceCallButtonSchema,
-    ExtensionButtonSchema,
-    OrderDetailsButtonSchema,
-    PostbackButtonSchema,
-    ReminderButtonSchema,
-    SendLocationButtonSchema,
-    SpmButtonSchema,
 ]);
 
 // =========================

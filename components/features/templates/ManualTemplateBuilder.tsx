@@ -349,22 +349,7 @@ export function ManualTemplateBuilder({
   const allowedButtonTypes = new Set<ButtonType>(
     isAuthCategory
       ? ['OTP']
-      : [
-          'QUICK_REPLY',
-          'URL',
-          'PHONE_NUMBER',
-          'COPY_CODE',
-          'FLOW',
-          'VOICE_CALL',
-          'CATALOG',
-          'MPM',
-          'EXTENSION',
-          'ORDER_DETAILS',
-          'POSTBACK',
-          'REMINDER',
-          'SEND_LOCATION',
-          'SPM',
-        ],
+      : ['QUICK_REPLY', 'URL', 'PHONE_NUMBER', 'COPY_CODE', 'FLOW'],
   )
   const counts = {
     total: buttons.length,
@@ -485,15 +470,6 @@ export function ManualTemplateBuilder({
     'PHONE_NUMBER',
     'COPY_CODE',
     'FLOW',
-    'VOICE_CALL',
-    'CATALOG',
-    'MPM',
-    'EXTENSION',
-    'ORDER_DETAILS',
-    'POSTBACK',
-    'REMINDER',
-    'SEND_LOCATION',
-    'SPM',
     'OTP',
   ])
   const missingButtonText = buttons.some((b) => requiresButtonText.has(b?.type) && !String(b?.text || '').trim())

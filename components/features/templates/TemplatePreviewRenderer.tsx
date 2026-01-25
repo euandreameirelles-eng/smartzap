@@ -39,6 +39,7 @@ export const TemplatePreviewRenderer: React.FC<TemplatePreviewRendererProps> = (
     const buttons = components.find(c => c.type === 'BUTTONS');
 
     const renderButton = (button: TemplateButton, index: number) => {
+        // Ícones para tipos de botão suportados pela Meta API
         const icons: Record<string, React.ReactNode> = {
             'URL': <ExternalLink size={14} />,
             'PHONE_NUMBER': <Phone size={14} />,
@@ -46,15 +47,6 @@ export const TemplatePreviewRenderer: React.FC<TemplatePreviewRendererProps> = (
             'COPY_CODE': <Copy size={14} />,
             'OTP': <Copy size={14} />,
             'FLOW': <MessageCircle size={14} />,
-            'CATALOG': <MessageCircle size={14} />,
-            'MPM': <MessageCircle size={14} />,
-            'VOICE_CALL': <Phone size={14} />,
-            'EXTENSION': <MessageCircle size={14} />,
-            'ORDER_DETAILS': <MessageCircle size={14} />,
-            'POSTBACK': <MessageCircle size={14} />,
-            'REMINDER': <MessageCircle size={14} />,
-            'SEND_LOCATION': <MessageCircle size={14} />,
-            'SPM': <MessageCircle size={14} />,
         };
 
         return (

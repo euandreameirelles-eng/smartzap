@@ -139,23 +139,10 @@ export default function TemplatesPage() {
     }
   };
 
-  const handleCreateManualTemplate = async () => {
-    const now = new Date()
-    const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`
-    const name = `template_${stamp}`
-    try {
-      const created = await controller.createManualDraft({
-        name,
-        category: 'MARKETING',
-        language: 'pt_BR',
-        parameterFormat: 'positional',
-      })
-      if (created?.id) {
-        router.push(`/templates/drafts/${encodeURIComponent(created.id)}`)
-      }
-    } catch {
-      // Toast já é emitido no controller.
-    }
+  const handleCreateManualTemplate = () => {
+    // Navega para a página de criação sem criar rascunho no banco.
+    // O rascunho só será criado quando o usuário clicar em "Salvar Rascunho".
+    router.push('/templates/drafts/new')
   }
 
   // Flows hub state

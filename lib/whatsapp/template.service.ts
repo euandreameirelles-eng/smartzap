@@ -416,37 +416,8 @@ export class TemplateService {
             }
         }
 
-        if (btn.type === 'CATALOG') {
-            return {
-                type: 'CATALOG',
-                text: btn.text
-            }
-        }
-
-        if (btn.type === 'MPM') {
-            return {
-                type: 'MPM',
-                text: btn.text
-            }
-        }
-
-        if (btn.type === 'VOICE_CALL') {
-            return {
-                type: 'VOICE_CALL',
-                text: btn.text
-            }
-        }
-
-        if (['EXTENSION', 'ORDER_DETAILS', 'POSTBACK', 'REMINDER', 'SEND_LOCATION', 'SPM'].includes(btn.type)) {
-            return {
-                type: btn.type,
-                ...(btn.text ? { text: btn.text } : {}),
-                ...(btn.action ? { action: btn.action } : {}),
-                ...(btn.payload ? { payload: btn.payload } : {}),
-            } as MetaButton
-        }
-
-        throw new Error(`Tipo de botão não suportado: ${String(btn.type)}`)
+        // Qualquer outro tipo não é suportado pela Meta API para templates
+        throw new Error(`Tipo de botão "${btn.type}" não é suportado pela Meta para templates. Use: Resposta Rápida, URL, Ligar, Copiar Código, OTP ou MiniApp (Flow).`)
     }
 
     private buildCarouselCards(cards: any[], parameterFormat: 'positional' | 'named') {
