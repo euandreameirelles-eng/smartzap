@@ -17,16 +17,24 @@ export async function GET() {
       settingsDb.get(KEYS.permanentTokenConfirmed),
     ])
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       onboardingCompleted: onboardingCompleted === 'true',
       permanentTokenConfirmed: permanentTokenConfirmed === 'true',
     })
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+    response.headers.set('Pragma', 'no-cache')
+    response.headers.set('Expires', '0')
+    return response
   } catch (error) {
     console.error('Erro ao buscar settings de onboarding:', error)
-    return NextResponse.json(
+    const response = NextResponse.json(
       { error: 'Erro ao buscar configurações' },
       { status: 500 }
     )
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+    response.headers.set('Pragma', 'no-cache')
+    response.headers.set('Expires', '0')
+    return response
   }
 }
 

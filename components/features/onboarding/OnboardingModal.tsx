@@ -227,7 +227,11 @@ export function OnboardingModal({ isConnected, onSaveCredentials, onMarkComplete
   const isFullyComplete = progress.completedAt !== null;
 
   // Mostrar modal apenas no fluxo inicial de onboarding
-  const shouldShow = isLoaded && !isFullyComplete && shouldShowOnboardingModal && !isConnected;
+  // NOTA: Removido `&& !isConnected` pois causava race condition - o modal desmontava
+  // antes de onMarkComplete() executar quando as credenciais eram salvas e o health
+  // refetch fazia isConnected virar true. O DashboardShell já controla a exibição
+  // baseado em isOnboardingCompletedInDb (banco), que é a fonte de verdade.
+  const shouldShow = isLoaded && !isFullyComplete && shouldShowOnboardingModal;
 
   // Estado temporário para credenciais durante o wizard
   const [credentials, setCredentials] = React.useState({
