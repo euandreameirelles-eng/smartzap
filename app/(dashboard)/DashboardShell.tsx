@@ -87,10 +87,10 @@ export function DashboardShell({
     // Dev mode for hiding dev-only nav items
     const { isDevMode } = useDevMode()
 
-    // WhatsApp onboarding progress hook (localStorage)
+    // WhatsApp onboarding progress hook (localStorage - apenas estado de UI)
+    // NOTA: A decisão de mostrar o modal vem do banco (isOnboardingCompletedInDb)
     const {
         progress: onboardingProgress,
-        shouldShowOnboardingModal,
         shouldShowChecklist,
         completeOnboarding,
     } = useOnboardingProgress()
