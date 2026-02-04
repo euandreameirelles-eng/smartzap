@@ -179,19 +179,9 @@ async function markContactOptOutAndSuppress(input: {
   metadata?: Record<string, unknown>
 }): Promise<void> {
   const phone = normalizePhoneNumber(input.phoneRaw)
-  const now = new Date().toISOString()
 
-  // Best-effort: atualiza contatos (se existir)
-  try {
-    await supabase
-      .from('contacts')
-      .update({ status: 'Opt-out', updated_at: now })
-      .eq('phone', phone)
-  } catch (e) {
-    console.warn('[Webhook] Falha ao atualizar contacts.status para Opt-out (best-effort):', e)
-  }
-
-  // Fonte da verdade para supressão global
+  // Apenas registra na tabela de supressões (fonte de verdade para bloqueios automáticos)
+  // NÃO atualiza contacts.status - esse campo é controlado manualmente pelo usuário
   try {
     await upsertPhoneSuppression({
       phone,

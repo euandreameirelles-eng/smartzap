@@ -927,6 +927,18 @@ export const contactDb = {
 
         if (error) throw error
 
+        // Se o status foi alterado para OPT_IN, desativa a supressão automática
+        if (data.status === ContactStatus.OPT_IN) {
+            const contact = await contactDb.getById(id)
+            if (contact?.phone) {
+                await supabase
+                    .from('phone_suppressions')
+                    .update({ is_active: false })
+                    .eq('phone', contact.phone)
+            }
+            return contact
+        }
+
         return contactDb.getById(id)
     },
 
